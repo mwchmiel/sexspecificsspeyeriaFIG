@@ -1,0 +1,1049 @@
+---
+title: "Fort Indiantown Gap Regal Frittilary nectar source analysis"
+author: "Matthew Chmielewski"
+date:  '`r format(Sys.time(), "%A, %d %B, %Y")`'
+output: pdf_document
+editor_options: 
+  chunk_output_type:console
+---
+
+Load Libraries
+```{r}
+packages <- c("xlsx", "purrr", "ggplot2", "dplyr", "tidyr", "RColorBrewer", "cowplot", "vegan", "lme4", "ggfortify", "ggrepel", "car", "lsmeans", "nlme", "lmerTest", "wesanderson", "ggsci")
+suppressMessages(suppressWarnings(sapply(packages, require, character.only=TRUE, quietly=TRUE)))
+```
+
+Read in PA and nectar concentration dataset, drop compounds with bad readings, add sex-association as a factor, write to file
+```{r}
+concdata<-read.xlsx("concdata.xlsx", sheetIndex  =1, header = TRUE)
+concdata[is_empty(concdata)] = NA
+head(concdata)
+concdata2<-concdata[,-c(11,24,35,38,47,53)]
+concdata2$Sex<-NA
+concdata2[grep("Asclepias", concdata2$Species),]$Sex<-"Male"
+concdata2$Sex[is.na(concdata2$Sex)]<-"Female"
+write.csv(concdata2, file ="metaboliteconcdata.csv", row.names = FALSE)
+
+```
+
+
+Define amino acids and carbohydrates from the larger set of nectar compounds, then create dataframes for these sets of compounds
+```{r}
+aminos<-c("Arginine", "Asparagine", "Aspartate", "beta.Alanine", "Glutamine", "Glycine", "Isoleucine", "Leucine", "Lysine", "Methionine", "Ornithine", "Phenylalanine", "Proline", "Threonine", "Tryptophan", "Tyrosine", "Valine")
+sugars<-c("Fructose", "Glucose", "Maltose", "Sucrose", "Trehalose")
+sugarframe<-concdata[sugars]
+sugarframe[is.na(sugarframe)] = 0
+sugarframe$totalconc<-rowSums(sugarframe[sugars])
+sugarframe$species<-as.factor(concdata$Species)
+
+aminoframe<-concdata[aminos]
+aminoframe[is.na(aminoframe)] = 0
+aminoframe$totalconc<-rowSums(aminoframe[aminos])
+aminoframe$species<-concdata$Species
+
+
+```
+
+Exploratory boxplots for carbohydrate concentrations by species
+```{r}
+pdf("sugarconcentrationsbyspecies.pdf")
+for (i in names(sugarframe[,-7])){
+
+x<-print(noquote(i))
+plot(sugarbyspecies<-ggplot(data=sugarframe, aes_string("species", x)) +
+geom_boxplot(fill = "gray")+
+theme_bw()+
+theme(axis.title.x = element_text(),
+axis.title.y = element_text(),
+axis.text.x  = element_text(angle=90, vjust=0.5),
+panel.grid.minor.x=element_blank(),
+panel.grid.major.x=element_blank(),
+panel.grid.minor.y=element_blank(),
+panel.grid.major.y=element_blank(),
+plot.title = element_text())+
+ggtitle("")+
+xlab("")+
+ylab(i))
+}
+dev.off()
+```
+
+Summary of mean concentrations of compounds by species
+````{r}
+Fructosesummary<-sugarframe %>% group_by(species) %>% summarise(Fructose = mean(Fructose))
+Sucrosesummary<-sugarframe %>% group_by(species) %>% summarise(Sucrose = mean(Sucrose))
+Glucosesummary<-sugarframe %>% group_by(species) %>% summarise(Glucose = mean(Glucose))
+Maltosesummary<-sugarframe %>% group_by(species) %>% summarise(Maltose = mean(Maltose))
+Trehalosesummary<-sugarframe %>% group_by(species) %>% summarise(Trehalose = mean(Trehalose))
+totalconcsugarssummary<-sugarframe %>% group_by(species) %>% summarise(totalconcsugars = mean(totalconc))
+
+totalaminosummary<-aminoframe %>% group_by(species) %>% summarise(totalamimo = mean(totalconc)) 
+prolinesummary<-aminoframe %>% group_by(species) %>% summarise(Proline = mean(Proline))
+leucinesummary<-aminoframe %>% group_by(species) %>% summarise(Leucine = mean(Leucine))
+glycinesummary<-aminoframe %>% group_by(species) %>% summarise(Glycine = mean(Glycine))
+
+concentrationsummary<-left_join(Fructosesummary, Sucrosesummary)
+concentrationsummary<-left_join(concentrationsummary, Glucosesummary)
+concentrationsummary<-left_join(concentrationsummary, Maltosesummary)
+concentrationsummary<-left_join(concentrationsummary, Trehalosesummary)
+concentrationsummary<-left_join(concentrationsummary, totalconcsugarssummary)
+concentrationsummary<-left_join(concentrationsummary, totalaminosummary)
+concentrationsummary<-left_join(concentrationsummary, prolinesummary)
+concentrationsummary<-left_join(concentrationsummary, leucinesummary)
+concentrationsummary<-left_join(concentrationsummary, glycinesummary)
+
+concentrationsummary
+
+write.csv(concentrationsummary, file = "summaryofconcentrations.csv")
+```
+
+
+Plots of amino acid concentrations by plant species
+```{r}
+pdf("aminoacidconcentrationsbyspecies.pdf")
+for (i in names(aminoframe[,-19])){
+x<-print(noquote(i))
+plot(aminobyspecies<-ggplot(data=aminoframe, aes_string("species", x)) +
+geom_boxplot(fill = "gray")+
+theme_bw()+
+theme(axis.title.x = element_text(),
+axis.title.y = element_text(),
+axis.text.x  = element_text(angle=90, vjust=0.5),
+panel.grid.minor.x=element_blank(),
+panel.grid.major.x=element_blank(),
+panel.grid.minor.y=element_blank(),
+panel.grid.major.y=element_blank(),
+plot.title = element_text())+
+ggtitle("")+
+xlab("")+
+ylab(i))
+}
+dev.off()
+```
+
+Create  PCA plots in order to explore the data as well as identify potential outliers, which were eventually be dropped from the final analysis
+```{r}
+
+################PCA with all usable values
+head(concdata)
+PCAdataconctotal<-concdata[,-c(19,38,53)] #drop columns with negative values
+
+PCAdataconctotal<-PCAdataconctotal[ , colSums(is.na(PCAdataconctotal)) == 0] #remove columns with NA values
+head(PCAdataconctotal)
+
+PCAconctotal<-prcomp(PCAdataconctotal[,c(-1,-2)], scale. = TRUE) # create PCA
+summary(PCAconctotal)
+
+#plot PCA
+PCAtotalconc<-autoplot(PCAconctotal, data = PCAdataconctotal, shape = 21, label = TRUE, fill = "Species", alpha = 0.6, frame = TRUE, frame.type = "t", frame.colour = "Species")+theme_bw()
+
+PCAtotalconc
+
+#sample rows 30 and 38 are large and huge outliers along PC1 (30 becomes an outlier once 38 is dropped)
+
+concdata[38,]
+################PCA with above outliers rows 30 and 38 removed (2036oA_38 and 2036oA_45)
+
+
+PCAdataconcsubset<-concdata[-c(30,38),-c(19,38, 53)] #drop columns with negative values
+
+PCAdataconcsubset<-PCAdataconcsubset[ , colSums(is.na(PCAdataconcsubset)) == 0] #remove columns with NA values
+head(PCAdataconcsubset)
+rownames(PCAdataconcsubset)<-PCAdataconcsubset$file_name
+
+PCAconcsubset<-prcomp(PCAdataconcsubset[,c(-1,-2)], scale. = TRUE) # create PCA
+summary(PCAconcsubset)
+
+
+#plot PCA without row numbers and with ellipses
+
+multispeciesPCA<-autoplot(PCAconcsubset, data = PCAdataconcsubset, shape = 21, fill = "Species", frame = TRUE, frame.type = "norm", frame.colour = "Species", alpha = 0.6, size =3)+theme_bw()
+
+multispeciesPCA
+
+#plot PCA with sample labels
+multiPCAsample<-autoplot(PCAconcsubset, data = PCAdataconcsubset, label = FALSE, shape = 21, size =2, fill = "Species", alpha = 0.6)+theme_bw()+geom_text_repel( label = rownames(PCAdataconcsubset)) 
+
+multiPCAsample
+
+PCAconcsubset
+#plot PCA with loadings
+multiPCAloadings<-autoplot(PCAconcsubset, data = PCAdataconcsubset, shape = 21, fill = "Species", loadings = TRUE, loading.type = "norm", loadings.label = TRUE,  alpha = 0.6, size =3)+theme_bw()
+
+multiPCAloadings
+
+bottom<-plot_grid(multispeciesPCA, multiPCAsample, ncol = 2)
+multinectar3panel<-plot_grid(multiPCAloadings, bottom, ncol = 1)
+
+pdf(file="multiplots.pdf", paper= "a4r", width = 11)
+PCAtotalconc
+multispeciesPCA
+multiPCAsample
+multiPCAloadings
+dev.off()
+
+asyriacadata<-subset(PCAdataconctotal, Species == "Asclepias syriaca")
+rownames(asyriacadata)<-asyriacadata$file_name
+atuberosadata<-subset(PCAdataconctotal, Species == "Asclepias tuberosa")
+rownames(atuberosadata)<-atuberosadata$file_name
+cstoebedata<-subset(PCAdataconctotal, Species == "Centaurea stoebe")
+rownames(cstoebedata)<-cstoebedata$file_name
+cdiscolordata<-subset(PCAdataconctotal, Species == "Cirsium discolor")
+rownames(cdiscolordata)<-cdiscolordata$file_name
+cpumilumdata<-subset(PCAdataconctotal, Species == "Cirsium pumilum")
+rownames(cpumilumdata)<-cpumilumdata$file_name
+mfistulosadata<-subset(PCAdataconctotal, Species == "Monarda fistulosa")
+rownames(mfistulosadata)<-mfistulosadata$file_name
+
+
+asyriacapca<-prcomp(asyriacadata[,c(-1,-2)], scale. = TRUE) 
+atuberosapca<-prcomp(atuberosadata[,c(-1,-2)], scale. = TRUE) 
+cstoebepca<-prcomp(cstoebedata[,c(-1,-2)], scale. = TRUE) 
+cdiscolorpca<-prcomp(cdiscolordata[,c(-1,-2)], scale. = TRUE) 
+cdiscolorpca<-prcomp(cdiscolordata[,c(-1,-2)], scale. = TRUE) 
+cpumilumpca<-prcomp(cpumilumdata[,c(-1,-2)], scale. = TRUE) 
+mfistulosapca<-prcomp(mfistulosadata[,c(-1,-2)], scale. = TRUE) 
+
+
+asyriacaplot<-autoplot(asyriacapca, data = asyriacadata, shape = 21, label = TRUE, fill = "Species", alpha = 0.6, frame = TRUE, frame.type = "t", frame.colour = "Species", )+theme_bw()
+asyriacaplot
+
+atuberosaplot<-autoplot(atuberosapca, data = atuberosadata, shape = 21, label = TRUE, fill = "Species", alpha = 0.6, frame = TRUE, frame.type = "t", frame.colour = "Species", )+theme_bw()
+atuberosaplot
+
+cstoebeplot<-autoplot(cstoebepca, data = cstoebedata, shape = 21, label = TRUE, fill = "Species", alpha = 0.6, frame = TRUE, frame.type = "t", frame.colour = "Species", )+theme_bw()
+cstoebeplot
+
+cdiscolorplot<-autoplot(cdiscolorpca, data = cdiscolordata, shape = 21, label = TRUE, fill = "Species", alpha = 0.6, frame = TRUE, frame.type = "t", frame.colour = "Species", )+theme_bw()
+cdiscolorplot
+
+cpumilumplot<-autoplot(cpumilumpca, data = cpumilumdata, shape = 21, label = TRUE, fill = "Species", alpha = 0.6, frame = TRUE, frame.type = "t", frame.colour = "Species", )+theme_bw()
+cpumilumplot
+
+mfistulosaplot<-autoplot(mfistulosapca, data = mfistulosadata, shape = 21, label = TRUE, fill = "Species", alpha = 0.6, frame = TRUE, frame.type = "t", frame.colour = "Species", )+theme_bw()
+mfistulosaplot
+
+pdf(file = "speciesPCAplots.pdf", paper = "a4r", width= 11)
+asyriacaplot
+atuberosaplot
+cstoebeplot
+cpumilumplot
+cdiscolorplot
+mfistulosaplot
+dev.off()
+
+#subset dataset based on PCA outliers
+PCAdataconctotal[c(13,30,38,59,73),]
+finalconcsubset<-PCAdataconctotal[-c(13,30,38,59,73),]
+
+finalconcsubset1<-finalconcsubset[ , colSums(is.na(finalconcsubset)) == 0]
+
+PCAfinal<-prcomp(finalconcsubset1[,c(-1,-2)], scale. = TRUE) # create PCA
+summary(PCAfinal)
+
+#plot PCA without row numbers and with ellipses
+
+finalPCAplot<-autoplot(PCAfinal, data = finalconcsubset1, shape = 21, fill = "Species", frame = TRUE, frame.type = "norm", frame.colour = "Species", alpha = 0.6, size =3)+theme_bw()
+
+finalPCAplot
+
+finalconcsubset2<-finalconcsubset1
+finalconcsubset2$sex<-finalconcsubset2$Species
+
+
+finalconcsubset2$sex[finalconcsubset2$Species == "Asclepias syriaca"]<-"M"
+finalconcsubset2$sex[finalconcsubset2$Species == "Asclepias tuberosa"]<-"M"
+finalconcsubset2$sex[finalconcsubset2$sex != "M"] = "F"
+finalconcsubset2$sex<-as.factor(finalconcsubset2$sex)
+
+finalconcsubset2
+
+write.csv(finalconcsubset2, "finalconcentrationnooutliers.csv")
+
+#plot PCA by sex
+PCAfinalsex<-prcomp(finalconcsubset2[,c(-1,-2,-48)], scale. = TRUE) # create PCA
+summary(PCAfinalsex)
+
+
+finalPCAplotsex<-autoplot(PCAfinalsex, data = finalconcsubset2, shape = 21, fill = "sex", frame = TRUE, frame.type = "norm", frame.colour = "sex", alpha = 0.6, size =3)+theme_bw()+ggtitle("All Compounds")
+
+finalPCAplotsex
+
+
+############PCA plots for sugars, AAs
+PCAsugarframe<-sugarframe[-c(13,30,38,59,73),]
+
+PCAsugarframe$sex<-as.character(PCAsugarframe$species)
+PCAsugarframe$sex[as.character(PCAsugarframe$species) == "Asclepias syriaca"]<-"M"
+PCAsugarframe$sex[as.character(PCAsugarframe$species) == "Asclepias tuberosa"]<-"M"
+PCAsugarframe$sex[as.character(PCAsugarframe$sex) != "M"]<-"F"
+(PCAsugarframe)
+PCAaminoframe<-aminoframe
+
+
+PCAsugarsex<-prcomp(PCAsugarframe[,c(-6,-7,-8)], scale. = TRUE) # create PCA
+summary(PCAsugarsex)
+
+
+PCAplotsugarsex<-autoplot(PCAsugarsex, data =PCAsugarframe, shape = 21, fill = "sex", frame = TRUE, frame.type = "norm", frame.colour = "sex", alpha = 0.6, size =3)+theme_bw()+ggtitle("Sugars")
+
+PCAplotsugarsex
+
+
+PCAaminoframe<-aminoframe[-c(13,30,38,59,73),]
+
+PCAaminoframe$sex<-as.character(PCAaminoframe$species)
+PCAaminoframe$sex[as.character(PCAaminoframe$species) == "Asclepias syriaca"]<-"M"
+PCAaminoframe$sex[as.character(PCAaminoframe$species) == "Asclepias tuberosa"]<-"M"
+PCAaminoframe$sex[as.character(PCAaminoframe$sex) != "M"]<-"F"
+
+
+PCAaminosex<-prcomp(PCAaminoframe[,c(-12,-18,-19,-20)], scale. = TRUE) # create PCA
+summary(PCAaminosex)
+
+
+PCAplotaminosex<-autoplot(PCAaminosex, data =PCAaminoframe, shape = 21, fill = "sex", frame = TRUE, frame.type = "norm", frame.colour = "sex", alpha = 0.6, size =3)+theme_bw()+ggtitle("Amino Acids")
+
+PCAplotaminosex
+
+pdf("PCAsbysex.pdf")
+finalPCAplotsex
+PCAplotsugarsex
+PCAplotaminosex
+dev.off()
+```
+
+Using information from the PCAs created above, outliers identified and new dataframes without those outliers generated
+```{r}
+newaminos<-c("Arginine", "Asparagine", "Aspartate", "beta.Alanine", "Glutamine", "Glycine", "Isoleucine", "Leucine", "Lysine", "Methionine", "Ornithine", "Proline", "Threonine", "Tryptophan", "Tyrosine", "Valine")
+newoligosaccharides<-c("Fructose", "Galactinol", "Glucose", "Maltose", "Sucrose")
+newsugars<-c("Fructose", "Galactinol", "Glucose", "Maltose", "myo.Inositol", "Sucrose", "Threonate")
+finaloligosaccharideframe<-finalconcsubset1[newoligosaccharides]
+finaloligosaccharideframe[is.na(finaloligosaccharideframe)] = 0
+finaloligosaccharideframe$totalconc<-rowSums(finaloligosaccharideframe[newoligosaccharides])
+finaloligosaccharideframe$species<-as.factor(finalconcsubset1$Species)
+levels(finaloligosaccharideframe$species)
+finalaminoframe<-finalconcsubset1[newaminos]
+finalaminoframe[is.na(finalaminoframe)] = 0
+finalaminoframe$totalconc<-rowSums(finalaminoframe[newaminos])
+finalaminoframe$species<-finalconcsubset1$Species
+finalaminoframe
+finalsugarframe<-finalconcsubset1[newsugars]
+finalsugarframe[is.na(finalsugarframe)] = 0
+finalsugarframe$totalconc<-rowSums(finalsugarframe[newsugars])
+finalsugarframe$species<-finalconcsubset1$Species
+finalsugarframe
+
+finalframenooutliers<-cbind(finalsugarframe, finalaminoframe)
+write.csv(finalframenooutliers, "finalframenooutlier.csv")
+```
+
+
+Plot carbohydrates of interest by species after dropping outliers
+```{r}
+pdf("oligosaccharidesbyspeciesnooutliers.pdf")
+for (i in names(finaloligosaccharideframe[,-7])){
+x<-print(noquote(i))
+plot(finaloligosaccharidesbyspecies<-ggplot(data=finaloligosaccharideframe, aes_string("species", x)) +
+geom_boxplot(fill = "gray")+
+#scale_fill_manual(values = c("#D95F02", "#7570B3"))+
+theme_bw()+
+theme(axis.title.x = element_text(),
+axis.title.y = element_text(),
+axis.text.x  = element_text(angle=90, vjust=0.5),
+panel.grid.minor.x=element_blank(),
+panel.grid.major.x=element_blank(),
+panel.grid.minor.y=element_blank(),
+panel.grid.major.y=element_blank(),
+plot.title = element_text())+
+ggtitle("")+
+xlab("")+
+ylab(i))
+}
+dev.off()
+```
+
+Plot amino acids without outliers
+```{r}
+pdf("AAbyspeciesnooutliers.pdf")
+for (i in names(finalaminoframe[,-18])){
+x<-print(noquote(i))
+plot(finalaminobyspecies<-ggplot(data=finalaminoframe, aes_string("species", x)) +
+geom_boxplot(fill = "gray")+
+#scale_fill_manual(values = c("#D95F02", "#7570B3"))+
+theme_bw()+
+theme(axis.title.x = element_text(),
+axis.title.y = element_text(),
+axis.text.x  = element_text(angle=90, vjust=0.5),
+panel.grid.minor.x=element_blank(),
+panel.grid.major.x=element_blank(),
+panel.grid.minor.y=element_blank(),
+panel.grid.major.y=element_blank(),
+plot.title = element_text())+
+ggtitle("")+
+xlab("")+
+ylab(i))
+}
+dev.off()
+
+```
+
+Plot all of the carbohydrates with no outliers
+```{r}
+pdf("sugarsbyspeciesnooutliers.pdf")
+for (i in names(finalsugarframe[,-9])){
+x<-print(noquote(i))
+plot(finalsugarsbyspecies<-ggplot(data=finalsugarframe, aes_string("species", x)) +
+geom_boxplot(fill = "gray")+
+#scale_fill_manual(values = c("#D95F02", "#7570B3"))+
+theme_bw()+
+theme(axis.title.x = element_text(),
+axis.title.y = element_text(),
+axis.text.x  = element_text(angle=90, vjust=0.5),
+panel.grid.minor.x=element_blank(),
+panel.grid.major.x=element_blank(),
+panel.grid.minor.y=element_blank(),
+panel.grid.major.y=element_blank(),
+plot.title = element_text())+
+ggtitle("")+
+xlab("")+
+ylab(i))
+}
+dev.off()
+```
+
+welch's ANOVA/t (defaults to var.equal = FALSE and therefore Welch's test, and t = ANOVA in comparison of two catergory (m vs.f))
+```{r}
+
+t.test(totalconc~sex, data =finalsugarframesex)
+
+#given number of tests across individual compounds here, alpha = 0.007 via bonferroni correction
+t.test(Glucose~sex, data =finalsugarframesex)
+t.test(Fructose~sex, data =finalsugarframesex)
+t.test(myo.Inositol~sex, data =finalsugarframesex)
+t.test(Sucrose~sex, data =finalsugarframesex)
+t.test(Galactinol~sex, data =finalsugarframesex)
+t.test(Maltose~sex, data =finalsugarframesex)
+t.test(Threonate~sex, data =finalsugarframesex)
+
+t.test(totalconc~sex, data =finalaminoframesex)
+
+#given number of tests across individual compounds here, alpha = 0.0167 via bonferroni correction
+t.test(Proline~sex, data =finalaminoframesex)
+t.test(Leucine~sex, data =finalaminoframesex)
+t.test(Glycine~sex, data =finalaminoframesex)
+```
+
+Plotting final boxplots to aggregate for figure output
+```{r}
+finalsugarframesex
+head(finalaminoframesex)
+
+sugarlong<-gather(finalsugarframesex, compound, value, Fructose:totalconc)
+sugarlong$compound[sugarlong$compound == "totalconc"]<-"total"
+aminolong<-gather(finalaminoframesex, compound, value, Arginine:totalconc)
+aminolong$compound[which(aminolong$compound == "totalconc")]<-"total"
+
+
+selectaminos<-c("Leucine", "Glycine", "Proline", "totalconc")
+aminotargets<-subset(aminolong, aminolong$compound == selectaminos)
+aminotargets$compound[aminotargets$compound == "totalconc"] <-"total"
+aminotargets$compound<-factor(aminotargets$compound, levels = c("Leucine", "Glycine", "Proline", "total"))
+
+colorvals<-c("dodgerblue3", "dodgerblue3", "sienna3", "sienna3", "sienna3", "sienna3")
+
+colorvals<-c("#3B9AB2", "#3B9AB2", "#F21A00","#F21A00","#F21A00","#F21A00")
+
+labelvals<-c("Asy", "Atu", "Cst", "Cdi", "Cpu", "Mfi")
+female = intToUtf8(9792)
+male = intToUtf8(9794)
+
+
+subset(aminolong, aminolong$species == "Asclepias tuberosa" & aminolong$compound == "Glycine")
+subset(aminotargets, aminotargets$species == "Asclepias tuberosa")
+
+
+totalsugarboxplot<-ggplot(data=subset(sugarlong, sugarlong$compound == "total"), aes(species, value)) +
+geom_boxplot(aes(fill = species))+
+scale_fill_manual(values = colorvals)+
+scale_x_discrete(labels = labelvals)+
+geom_vline(xintercept = 2.5, linetype = "dashed")+
+theme_bw()+
+theme(axis.title.x = element_blank(),
+axis.title.y = element_text(face = "bold", size = 18, hjust = 0.5),
+axis.text.x  = element_blank(),
+axis.text.y = element_text(face = "bold", size = 16),
+panel.grid.minor.x=element_blank(),
+panel.grid.major.x=element_blank(),
+panel.grid.minor.y=element_blank(),
+panel.grid.major.y=element_blank(),
+legend.position = "none",
+plot.title = element_blank(),
+plot.margin = unit(c(0,1,0.5,1), "cm"))+
+ggtitle("Total")+
+xlab("")+
+ylab("Total")
+
+totalsugarboxplot
+
+
+sugartotalfinal<-totalsugarboxplot+
+geom_text(label = female, x=6, y = 1100000, size = 10)+
+geom_text(label = male, x = 1, y = 1100000, size = 10)+
+geom_text(label = "*", x = 2.5, y = 1100000, size = 10)
+
+
+sugartotalfinal
+
+   
+
+
+
+glucoseboxplot<-ggplot(data=subset(sugarlong, sugarlong$compound == "Glucose"), aes(species, value)) +
+geom_boxplot(aes(fill = species))+
+scale_fill_manual(values = colorvals)+
+scale_x_discrete(labels = labelvals)+
+geom_vline(xintercept = 2.5, linetype = "dashed")+
+theme_bw()+
+theme(axis.title.x = element_blank(),
+axis.title.y = element_text(face = "bold", size = 18, hjust = 0.5),
+axis.text.x  = element_blank(),
+axis.text.y = element_text(face = "bold", size = 16),
+panel.grid.minor.x=element_blank(),
+panel.grid.major.x=element_blank(),
+panel.grid.minor.y=element_blank(),
+panel.grid.major.y=element_blank(),
+legend.position = "none",
+plot.title = element_blank(),
+plot.margin = unit(c(0,1,0.5,1), "cm"))+
+ggtitle("")+
+xlab("")+
+ylab("Glucose")
+
+glucoseboxplot
+
+glucosefinal<-glucoseboxplot+
+geom_text(label = female, x=6, y = 550000, size = 10)+
+geom_text(label = male, x = 1, y = 550000, size = 10)+
+geom_text(label = "*", x = 2.5, y = 550000, size = 10)
+   
+   
+glucosefinal
+
+
+
+Sucroseboxplot<-ggplot(data=subset(sugarlong, sugarlong$compound == "Sucrose"), aes(species, value)) +
+geom_boxplot(aes(fill = species))+
+scale_fill_manual(values = colorvals)+
+scale_x_discrete(labels = labelvals)+
+geom_vline(xintercept = 2.5, linetype = "dashed")+
+theme_bw()+
+theme(axis.title.x = element_blank(),
+axis.title.y = element_text(face = "bold", size = 18, hjust = 0.5),
+axis.text.x  = element_blank(),
+axis.text.y = element_text(face = "bold", size = 16),
+panel.grid.minor.x=element_blank(),
+panel.grid.major.x=element_blank(),
+panel.grid.minor.y=element_blank(),
+panel.grid.major.y=element_blank(),
+legend.position = "none",
+plot.title = element_blank(),
+plot.margin = unit(c(0,1,0.5,1), "cm"))+
+ggtitle("")+
+xlab("")+
+ylab("Sucrose")
+
+Sucroseboxplot
+
+Sucrosefinal<-ggdraw() +draw_plot(Sucroseboxplot)
+  
+   
+Sucrosefinal
+
+
+Fructoseboxplot<-ggplot(data=subset(sugarlong, sugarlong$compound == "Fructose"), aes(species, value)) +
+geom_boxplot(aes(fill = species))+
+scale_fill_manual(values = colorvals)+
+scale_x_discrete(labels = labelvals)+
+geom_vline(xintercept = 2.5, linetype = "dashed")+
+theme_bw()+
+theme(axis.title.x = element_blank(),
+axis.title.y = element_text(face = "bold", size = 18, hjust = 0.5),
+axis.text.x  = element_blank(),
+axis.text.y = element_text(face = "bold", size = 16),
+panel.grid.minor.x=element_blank(),
+panel.grid.major.x=element_blank(),
+panel.grid.minor.y=element_blank(),
+panel.grid.major.y=element_blank(),
+legend.position = "none",
+plot.title = element_blank(),
+plot.margin = unit(c(0,1,0.5,1), "cm"))+
+ggtitle("")+
+xlab("")+
+ylab("Fructose")
+
+Fructoseboxplot
+
+fructosefinal<-Fructoseboxplot+
+geom_text(label = "*", x = 2.5, y = 280000, size = 10)
+   
+   
+
+ 
+   
+fructosefinal
+
+
+
+Galactinolboxplot<-ggplot(data=subset(sugarlong, sugarlong$compound == "Galactinol"), aes(species, value)) +
+geom_boxplot(aes(fill = species))+
+scale_fill_manual(values = colorvals)+
+scale_x_discrete(labels = labelvals)+
+geom_vline(xintercept = 2.5, linetype = "dashed")+
+theme_bw()+
+theme(axis.title.x = element_blank(),
+axis.title.y = element_text(face = "bold", size = 18, hjust = 0.5),
+axis.text.x  = element_text(face = "bold", size = 16),
+axis.text.y = element_text(face = "bold", size = 16),
+panel.grid.minor.x=element_blank(),
+panel.grid.major.x=element_blank(),
+panel.grid.minor.y=element_blank(),
+panel.grid.major.y=element_blank(),
+legend.position = "none",
+plot.title = element_blank(),
+plot.margin = unit(c(0,1,0.5,1), "cm"))+
+ggtitle("")+
+xlab("")+
+ylab("Galactinol")
+
+Galactinolboxplot
+
+galactinolfinal<-Galactinolboxplot+
+geom_text(label = "*", x = 2.5, y = 1600, size = 10)
+   
+   
+galactinolfinal
+
+
+Maltoseboxplot<-ggplot(data=subset(sugarlong, sugarlong$compound == "Maltose"), aes(species, value)) +
+geom_boxplot(aes(fill = species))+
+scale_fill_manual(values = colorvals)+
+scale_x_discrete(labels = labelvals)+
+geom_vline(xintercept = 2.5, linetype = "dashed")+
+theme_bw()+
+theme(axis.title.x = element_blank(),
+axis.title.y = element_text(face = "bold", size = 18, hjust = 0.5),
+axis.text.x  = element_blank(),
+axis.text.y = element_text(face = "bold", size = 16),
+panel.grid.minor.x=element_blank(),
+panel.grid.major.x=element_blank(),
+panel.grid.minor.y=element_blank(),
+panel.grid.major.y=element_blank(),
+legend.position = "none",
+plot.title = element_blank(),
+plot.margin = unit(c(0,1,0.5,1), "cm"))+
+ggtitle("")+
+xlab("")+
+ylab("Maltose")
+
+Maltoseboxplot
+
+Maltosefinal<-ggdraw() +draw_plot(Maltoseboxplot)
+ 
+    
+Maltosefinal
+
+
+
+Threonateboxplot<-ggplot(data=subset(sugarlong, sugarlong$compound == "Threonate"), aes(species, value)) +
+geom_boxplot(aes(fill = species))+
+scale_fill_manual(values = colorvals)+
+scale_x_discrete(labels = labelvals)+
+geom_vline(xintercept = 2.5, linetype = "dashed")+
+theme_bw()+
+theme(axis.title.x = element_blank(),
+axis.title.y = element_text(face = "bold", size = 18, hjust = 0.5),
+axis.text.x  = element_blank(),
+axis.text.y = element_text(face = "bold", size = 16),
+panel.grid.minor.x=element_blank(),
+panel.grid.major.x=element_blank(),
+panel.grid.minor.y=element_blank(),
+panel.grid.major.y=element_blank(),
+legend.position = "none",
+plot.title = element_blank(),
+plot.margin = unit(c(0,1,0.5,1), "cm"))+
+ggtitle("")+
+xlab("")+
+ylab("Threonate")
+
+Threonateboxplot
+
+threonatefinal<-Threonateboxplot+
+geom_text(label = "*", x = 2.5, y = 130, size = 10)
+   
+threonatefinal
+  
+   
+
+
+
+
+myo.Inositolboxplot<-ggplot(data=subset(sugarlong, sugarlong$compound == "myo.Inositol"), aes(species, value)) +
+geom_boxplot(aes(fill = species))+
+scale_fill_manual(values = colorvals)+
+scale_x_discrete(labels = labelvals)+
+geom_vline(xintercept = 2.5, linetype = "dashed")+
+theme_bw()+
+theme(axis.title.x = element_blank(),
+axis.title.y = element_text(face = "bold", size = 18, hjust = 0.5),
+axis.text.x  = element_text(face = "bold", size = 16),
+axis.text.y = element_text(face = "bold", size = 16),
+panel.grid.minor.x=element_blank(),
+panel.grid.major.x=element_blank(),
+panel.grid.minor.y=element_blank(),
+panel.grid.major.y=element_blank(),
+legend.position = "none",
+plot.title = element_blank(),
+plot.margin = unit(c(0,1,0.5,1), "cm"))+
+ggtitle("")+
+xlab("")+
+ylab("myo.Inositol")
+
+myo.Inositolboxplot
+
+myo.Inositolfinal<-ggdraw() +draw_plot(myo.Inositolboxplot)
+  
+   
+myo.Inositolfinal
+
+
+totalaminoboxplot<-ggplot(data=subset(aminotargets, aminotargets$compound == "total"), aes(species, value)) +
+geom_boxplot(aes(fill = species))+
+scale_fill_manual(values = colorvals)+
+scale_x_discrete(labels = labelvals)+
+geom_vline(xintercept = 2.5, linetype = "dashed")+
+theme_bw()+
+theme(axis.title.x = element_blank(),
+axis.title.y = element_text(face = "bold", size = 18, hjust = 0.5),
+axis.text.y = element_text(face = "bold", size = 16),
+axis.text.x  = element_blank(),
+panel.grid.minor.x=element_blank(),
+panel.grid.major.x=element_blank(),
+panel.grid.minor.y=element_blank(),
+panel.grid.major.y=element_blank(),
+legend.position = "none",
+plot.title = element_text(face = "bold", size = 12, hjust = 0.5))+
+ggtitle("")+
+xlab("")+
+ylab("Total")
+
+aminototalfinal<-totalaminoboxplot+geom_text(label = female, x=6, y = 18000, size = 10)+
+geom_text(label = male, x = 1, y = 18000, size = 10)+
+geom_text(label = "*", x = 2.5, y = 18000, size = 10)
+  
+aminototalfinal  
+
+
+Leucineboxplot<-ggplot(data=subset(aminotargets, aminotargets$compound == "Leucine"), aes(species, value)) +
+geom_boxplot(aes(fill = species))+
+scale_fill_manual(values = colorvals)+
+scale_x_discrete(labels = labelvals)+
+geom_vline(xintercept = 2.5, linetype = "dashed")+
+theme_bw()+
+theme(axis.title.x = element_blank(),
+axis.title.y = element_text(face = "bold", size = 18, hjust = 0.5),
+axis.text.x  = element_text(face = "bold", size = 16),
+axis.text.y = element_text(face = "bold", size = 16),
+panel.grid.minor.x=element_blank(),
+panel.grid.major.x=element_blank(),
+panel.grid.minor.y=element_blank(),
+panel.grid.major.y=element_blank(),
+legend.position = "none",
+plot.title = element_text(face = "bold", size = 12, hjust = 0.5))+
+ggtitle("")+
+xlab("")+
+ylab("Leucine")
+
+Leucinefinal<-Leucineboxplot+geom_text(label = female, x=6, y = 21.5, size = 10)+
+geom_text(label = male, x = 1, y = 21.5, size = 10)+
+geom_text(label = "*", x = 2.5, y = 21.5, size = 10)
+ 
+Leucinefinal
+  
+
+
+Prolineboxplot<-ggplot(data=subset(aminotargets, aminotargets$compound == "Proline"), aes(species, value)) +
+geom_boxplot(aes(fill = species))+
+scale_fill_manual(values = colorvals)+
+scale_x_discrete(labels = labelvals)+
+geom_vline(xintercept = 2.5, linetype = "dashed")+
+theme_bw()+
+theme(axis.title.x = element_blank(),
+axis.title.y = element_text(face = "bold", size = 18, hjust = 0.5),
+axis.text.y = element_text(face = "bold", size = 16),
+axis.text.x  = element_blank(),
+panel.grid.minor.x=element_blank(),
+panel.grid.major.x=element_blank(),
+panel.grid.minor.y=element_blank(),
+panel.grid.major.y=element_blank(),
+legend.position = "none",
+plot.title = element_text(face = "bold", size = 12, hjust = 0.5))+
+ggtitle("")+
+xlab("")+
+ylab("Proline")
+
+Prolineboxplot
+
+Prolinefinal<-Prolineboxplot+geom_text(label = female, x=6, y = 48, size = 10)+
+geom_text(label = male, x = 1, y = 48, size = 10)+
+geom_text(label = "*", x = 2.5, y = 48, size = 10)
+ 
+Prolinefinal
+  
+  
+
+
+Glycineboxplot<-ggplot(data=subset(aminotargets, aminotargets$compound == "Glycine"), aes(species, value)) +
+geom_boxplot(aes(fill = species))+
+scale_fill_manual(values = colorvals)+
+scale_x_discrete(labels = labelvals)+
+geom_vline(xintercept = 2.5, linetype = "dashed")+
+theme_bw()+
+theme(axis.title.x = element_blank(),
+axis.title.y = element_text(face = "bold", size = 18, hjust = 0.5),
+axis.text.x  = element_text(face = "bold", size = 16),
+axis.text.y = element_text(face = "bold", size = 16),
+panel.grid.minor.x=element_blank(),
+panel.grid.major.x=element_blank(),
+panel.grid.minor.y=element_blank(),
+panel.grid.major.y=element_blank(),
+legend.position = "none",
+plot.title = element_text(face = "bold", size = 12, hjust = 0.5))+
+ggtitle("")+
+xlab("")+
+ylab("Glycine")
+
+Glycinefinal<-Glycineboxplot+geom_text(label = female, x=6, y = 50, size = 10)+
+geom_text(label = male, x = 1, y = 50, size = 10)+
+geom_text(label = "*", x = 2.5, y = 50, size = 10)
+
+  
+  
+
+Glycinefinal
+
+
+aminoupdate<-plot_grid(aminototalfinal, Prolinefinal, Glycinefinal, Leucinefinal, NULL, NULL, NULL, NULL, align = "hv", ncol= 2)
+aminoupdate
+
+
+sugarupdate<-plot_grid(sugartotalfinal, glucosefinal, Fructoseboxplot, Sucroseboxplot, Maltoseboxplot, threonatefinal, myo.Inositolboxplot, galactinolfinal, align = "hv", ncol = 2)
+sugarupdate
+
+sugarfigure<-ggdraw()+
+draw_plot(sugarupdate)+
+draw_text(text = female, size = 30, hjust = -20, vjust = -13.5)+ 
+draw_text(text = male, size = 30, hjust = 18, vjust = -13.5)+
+draw_text(text = female, size = 30, hjust = 1.5, vjust = -13.5)+ 
+draw_text(text = male, size = 30, hjust = -3.5, vjust = -13.5)+
+draw_text("*", size= 30, vjust = -14.5, hjust = 23.15)+
+draw_text("*", size= 30, vjust = -14.5, hjust = -16.85)+
+draw_text("*", size= 30, vjust = -5.5, hjust = 23.15)
+
+
+draw_text("*", size= 30, vjust = -14.5, hjust = 23.15)
+draw_text("*", size= 30, vjust = -14.5, hjust = 23.15)
+draw_text("*", size= 30, vjust = -14.5, hjust = 23.15)
+
+sugarfigure
+
+
+
+
++draw_line(x = c(0.15, 0.25), y = 0.95, color = "deepskyblue2", size = 1)+ draw_line(x = c(0.15, 0.25), y = 0.7, color = "deepskyblue2", size = 1) + draw_line(x = c(0.15, 0.25), y = 0.45, color = "deepskyblue2", size = 1)+ draw_line(x = c(0.15, 0.25), y = 0.2, color = "deepskyblue2", size = 1) +
+  
+draw_line(x = c(0.65, 0.75), y = 0.95, color = "deepskyblue2", size = 1) + draw_line(x = c(0.65, 0.75), y = 0.7, color = "deepskyblue2", size = 1) + draw_line(x = c(0.65, 0.75), y = 0.45, color = "deepskyblue2", size = 1)+ draw_line(x = c(0.65, 0.75), y = 0.2, color = "deepskyblue2", size = 1)+
+  
+draw_line(x = c(0.26, 0.43), y = 0.95, color = "goldenrod2", size = 1)+ draw_line(x = c(0.26, 0.43), y = 0.7, color = "goldenrod2", size = 1) + draw_line(x = c(0.26, 0.43), y = 0.45, color = "goldenrod2", size = 1)+ draw_line(x = c(0.26, 0.43), y = 0.2, color = "goldenrod2", size = 1) +
+
+draw_line(x = c(0.76, 0.94), y = 0.95, color = "goldenrod2", size = 1) + draw_line(x = c(0.76, 0.94), y = 0.7, color = "goldenrod2", size = 1) + draw_line(x = c(0.76, 0.94), y = 0.45, color = "goldenrod2", size = 1)+ draw_line(x = c(0.76, 0.94), y = 0.2, color = "goldenrod2", size = 1)
+
+
+sugarfigure
+
+png("sugartotaloutput.png",width = 300, height = 225, units='mm', res = 400)
+sugarfigure
+dev.off()
+
+
+png("aminototaloutput.png", width = 300, height = 225, units = 'mm', res = 400)
+aminofigure
+dev.off()
+
+
+aminogrid<-plot_grid(aminototalfinal, Leucinefinal, Glycinefinal, Prolinefinal, align = "hv")
+
+sugargrid<-plot_grid(sugartotalfinal, glucosefinal, fructosefinal, Sucrosefinal, Maltosefinal, threonatefinal, myo.Inositolfinal, Galactinolfinal, ncol = 2)
+
+aminogrid
+
+
+
+
+
+png("aminofinal.png", width = 465, height = 225, units='mm', res = 300)
+aminofinal
+dev.off()
+
+png("sugarfinal.png", width = 465, height = 225, units='mm', res = 300)
+sugarfinal
+dev.off()
+
+
+
+
+
+aminoboxplot<-ggplot(data=aminotargets, aes(species, value)) +
+geom_boxplot(aes(fill = species))+
+facet_grid(rows = vars(compound), scales = "free_y")+
+scale_fill_uchicago(alpha = 0.5)+
+theme_bw()+
+theme(axis.title.x = element_text(),
+axis.title.y = element_text(size =12, face = "bold"),
+axis.text.x  = element_text(size = 12, face = "bold", angle = 90),
+panel.grid.minor.x=element_blank(),
+panel.grid.major.x=element_blank(),
+panel.grid.minor.y=element_blank(),
+panel.grid.major.y=element_blank(),
+plot.title = element_text(),
+legend.position = "none")+
+ggtitle("")+
+xlab("")+
+ylab("Concentration (ng/uL)")
+
+aminoboxplot
+
+
+
+sugarboxplot<-ggplot(data=sugarlong, aes(species, value)) +
+geom_boxplot(aes(fill = species))+
+facet_grid(rows = vars(compound), scales = "free_y")+
+scale_fill_uchicago(alpha = 0.5)+
+theme_bw()+
+theme(axis.title.x = element_text(),
+axis.title.y = element_text(size =12, face = "bold"),
+axis.text.x  = element_text(size = 12, face = "bold", angle = 90),
+panel.grid.minor.x=element_blank(),
+panel.grid.major.x=element_blank(),
+panel.grid.minor.y=element_blank(),
+panel.grid.major.y=element_blank(),
+plot.title = element_text(),
+legend.position = "none")+
+ggtitle("")+
+xlab("")+
+ylab("Concentration (ng/uL)")
+
+sugarboxplot
+
+
+female = intToUtf8(9792)
+male = intToUtf8(9794)
+
+
+plot(Proline~Leucine, data = finalaminoframe)
+plot(Proline~Glycine, data = finalaminoframe)
+plot(Proline~totalconc, data = finalaminoframe)
+
+summary(lm(Proline~Leucine, data = finalaminoframe))
+summary(lm(Proline~Glycine, data = finalaminoframe))
+summary(lm(Proline~totalconc, data = finalaminoframe))
+
+
+```
+
+Create pairwise correlation matrix for supplemental material
+```{r}
+for (i in names(concdata[-1:-2])){
+plot(concdata[[i]]~concdata[[i+1]], main=i, ylab = "oldPA", xlab= "new PA")
+}
+##############not right but close
+corrnames<-c("Threonate", "Sucrose", "myo.Inositol","Maltose", "Glucose","Galactinol","Fructose", "Proline", "Leucine","Glycine")
+corrnames
+sugarcorrnames<-c("Threonate", "Sucrose", "myo.Inositol","Maltose", "Glucose","Galactinol","Fructose")
+aminocorrnames<-c("Proline", "Leucine","Glycine")
+
+library("reshape2")
+totalcor<-round(cor(concdata[corrnames]),2)
+
+get_lower_tri<-function(totalcor){
+    totalcor[lower.tri(totalcor)] <- NA
+    return(totalcor)
+}
+
+lowertritotal<-get_lower_tri(totalcor)
+lowertritotal
+
+totalcor2<-melt(lowertritotal, na.rm = TRUE)
+
+pdf(file = "pairwisecorrelations.pdf", paper = "a4r",  height = 20, width = 20)
+ggplot(totalcor2, aes(Var1, Var2, fill = value))+
+   geom_tile(color = "white")+
+   scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
+   midpoint = 0, limit = c(-1,1), space = "Lab", 
+   name="Pearson\nCorrelation") +
+   xlab("")+
+   ylab("")+
+  theme_minimal()+ 
+   geom_text(aes(label = value), size = 3)+
+   theme(axis.text.x = element_text(angle = 90, size = 10), axis.text.y = element_text(size = 10))
+dev.off()
+
+
+
+sugarcorr<-round(cor(concdata[sugarcorrnames]),2)
+
+lowertrisugar<-get_lower_tri(sugarcorr)
+lowertrisugar
+
+
+sugarcorr2<-melt(lowertrisugar, na.rm = TRUE)
+
+pdf(file = "pairwisecorrsugar.pdf", paper = "a4r",  height = 20, width = 20)
+ggplot(sugarcorr2, aes(Var1, Var2, fill = value))+
+   geom_tile(color = "white")+
+   scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
+   midpoint = 0, limit = c(-1,1), space = "Lab", 
+   name="Pearson\nCorrelation") +
+   xlab("")+
+   ylab("")+
+  theme_minimal()+ 
+   geom_text(aes(label = value), size = 1.5)+
+   theme(axis.text.x = element_text(angle = 90, size = 5), axis.text.y = element_text(size = 5))
+dev.off()
+
+
+
+aminocorr<-round(cor(concdata[aminocorrnames]),2)
+
+
+lowertriamino<-get_lower_tri(aminocorr)
+lowertriamino
+
+aminocorr2<-melt(lowertriamino, na.rm = TRUE)
+
+pdf(file = "pairwisecorramino.pdf", paper = "a4r",  height = 20, width = 20)
+ggplot(aminocorr2, aes(Var1, Var2, fill = value))+
+   geom_tile(color = "white")+
+   scale_fill_gradient2(low = "blue", high = "red", mid = "white", 
+   midpoint = 0, limit = c(-1,1), space = "Lab", 
+   name="Pearson\nCorrelation") +
+   xlab("")+
+   ylab("")+
+  theme_minimal()+ 
+   geom_text(aes(label = value), size = 1.5)+
+   theme(axis.text.x = element_text(angle = 90, size = 5), axis.text.y = element_text(size = 5))
+dev.off()
+
+
+```
+

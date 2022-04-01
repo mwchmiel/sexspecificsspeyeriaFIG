@@ -1,0 +1,204 @@
+---
+title: "Classifying unknown Cirsium species for Sex Specific Foraging Frittilary FIG using bound-constraint support vector machine classification"
+author: "Matthew Chmielewski"
+date:  '`r format(Sys.time(), "%A, %d %B, %Y")`'
+output: pdf_document
+editor_options: 
+  chunk_output_type:console
+---
+Import data
+
+```{r}
+SSFFclass<-read.csv(file = "SSFFclass.csv")
+head(SSFFclass)
+nrow(subset(SSFFclass, NectarPlantLatinName == "Cirsium pumilum"))
+nrow(subset(SSFFclass, NectarPlantLatinName == "Cirsium discolor"))
+nrow(subset(SSFFclass, NectarPlantLatinName == "Cirsium spp"))
+```
+
+import packages and load them
+```{r}
+packages <- c("kernlab", "dplyr", "ggplot2", "xlsx")
+suppressMessages(suppressWarnings(sapply(packages, require, character.only=TRUE, quietly=TRUE)))
+```
+
+Subset to Cirsium rows only
+```{r}
+cirsium.data<-as_tibble(filter(SSFFclass, grepl("Cirsium", NectarPlantLatinName))) 
+cirsium.data<-as.data.frame(cirsium.data)
+cirsium.data$NectarPlantLatinName<-as.factor(cirsium.data$NectarPlantLatinName)
+```
+
+Create Julian day object
+```{r}
+cirsium.julian<-as.matrix(select(cirsium.data, Julian))
+nrow(cirsium.julian)
+```
+
+Create species object
+```{r}
+cirsium.species<-droplevels(cirsium.data$NectarPlantLatinName)
+length(cirsium.species)
+cirsium.species
+```
+
+Define classes to be modeled, fit c-bsvc models, create predictions from models
+```{r}
+pumilum = (cirsium.species == "Cirsium pumilum") + 0
+discolor = (cirsium.species == "Cirsium discolor") + 0
+
+
+fitpumilum = ksvm(y = pumilum, x = cirsium.julian, type = "C-bsvc", prob.model = TRUE)
+fitdiscolor = ksvm(y = discolor, x = cirsium.julian, type = "C-bsvc", prob.model = TRUE)
+
+predpumilum = predict(fitpumilum, cirsium.julian, type = "probabilities")
+preddiscolor = predict(fitdiscolor, cirsium.julian, type = "probabilities")
+```
+
+Put together table of probabilities. the unknown probability is 1 minus the other probabilities, examine output
+```{r}
+pred = data.frame(discolor = preddiscolor[,2L], pumilum = predpumilum[,2L], unknown = 1 - preddiscolor[,2L] - predpumilum[,2L], original = cirsium.species)
+
+tail(pred)
+```
+
+Create predicted column to populate and use probabilites from model to assign species (where assigned species is the highest probability, could set a threshold if we decide this is unsatisfactory), examine output
+```{r}
+pred<-mutate(pred, predicted = NA)
+pred$predicted[which(pred$discolor > pred$pumilum & pred$discolor > pred$unknown)] = "Cirsium discolor"
+pred$predicted[which(pred$pumilum > pred$discolor & pred$pumilum > pred$unknown)] = "Cirsium pumilum"
+pred$predicted[which(pred$unknown > pred$pumilum & pred$unknown > pred$discolor)] = "Cirsium spp"
+
+pred$predicted
+```
+
+
+Add predictions to original cirsium data, examine data to understand new categorizations
+
+```{r}
+newcirsium<-bind_cols(cirsium.data, pred)
+
+#examine output
+head(newcirsium)
+
+# how many Cirsium spp were categorized by model
+length(which(newcirsium$predicted == "Cirsium pumilum" & newcirsium$original == "Cirsium spp"))
+#56 from spp to pumilum
+
+length(which(newcirsium$predicted == "Cirsium discolor" & newcirsium$original == "Cirsium spp"))
+#155 from spp to discolor
+
+length(which(newcirsium$predicted == "Cirsium spp" & newcirsium$original == "Cirsium spp"))
+#30 remain uncategorized
+
+### #knowns that were erroneously recategorized/original # * 100 = percent error
+length(which(newcirsium$predicted != "Cirsium pumilum" & newcirsium$original == "Cirsium pumilum"))/length(which(newcirsium$original == "Cirsium pumilum"))
+#4.1 % pretty good
+
+length(which(newcirsium$predicted != "Cirsium discolor" & newcirsium$original == "Cirsium discolor"))/length(which(newcirsium$original == "Cirsium discolor"))
+#7.9% here, but some of these are very late flowering discolor
+
+```
+
+
+Now we need to create a consensus set where we keep original knowns but add newly classified IDs
+
+Then we should examine the output to determine how robust our recategorization has been
+```{r}
+newcirsium$consensus = newcirsium$original
+length(which(newcirsium$consensus == "Cirsium spp"))
+
+#241 unknowns
+
+newcirsium$consensus[which(newcirsium$original == "Cirsium spp")] = newcirsium$predicted[which(newcirsium$original == "Cirsium spp")]
+
+length(which(newcirsium$consensus == "Cirsium spp"))
+
+#28 unknowns. Which are they? 
+#make sure year is a factor for plotting
+newcirsium$Year<-as.factor(newcirsium$Year) 
+
+
+#plot phenology of Cirsium flowering by year
+pdf("phenology_by_year_cirsium.pdf")
+
+for (i in levels(newcirsium$Year)){
+  x<-paste("Flowering Phenology at FIG in", i, sep=" ")
+  
+  
+  plot(  
+    cirsiumpheno<-ggplot(data=subset(newcirsium, newcirsium$Year == i), aes(Julian, consensus)) +
+      geom_jitter(fill = "darkgrey") +
+      theme_bw()+
+      theme(axis.title.x = element_text(),
+            axis.title.y = element_text(),
+            axis.text.x  = element_text(angle=90, vjust=0.5),
+            panel.grid.minor.x=element_blank(),
+            panel.grid.major.x=element_blank(),
+            panel.grid.minor.y=element_blank(),
+            panel.grid.major.y=element_blank(),
+            plot.title = element_text())+
+      ggtitle(x)+
+      xlab("Julian Date")+
+      ylab("Flower Species"))
+  
+  
+}
+
+dev.off()
+```
+
+Looking at the remaining unknowns, many of these are quite late in the year and therefore are at the tail end of the discolor flowering distribution we can assign discolor to the the late flowering plants that are still unassigned.
+
+We can then plot the data and output to file.
+
+```{r}
+#create new df
+newcirsium2<-newcirsium
+
+#28 unknowns
+length(which(newcirsium2$consensus == "Cirsium spp"))
+
+#take late unknowns and assign them to discolor
+newcirsium2$consensus[newcirsium2$consensus == "Cirsium spp" & newcirsium2$Julian > 240] <-"Cirsium discolor"
+
+#see how many are left
+subset(newcirsium2, consensus == "Cirsium spp") %>% nrow()
+
+#only 6 unknowns left
+
+#plot by year in order to look at data, see unknowns in 2001, 2002 data
+pdf("phenology_by_year_cirsium_2.pdf")
+
+for (i in levels(newcirsium2$Year)){
+  x<-paste("Flowering Phenology at FIG in", i, sep=" ")
+  
+  
+  plot(  
+    cirsiumpheno<-ggplot(data=subset(newcirsium2, newcirsium$Year == i), aes(Julian, consensus)) +
+      geom_jitter(fill = "darkgrey") +
+      theme_bw()+
+      theme(axis.title.x = element_text(),
+            axis.title.y = element_text(),
+            axis.text.x  = element_text(angle=90, vjust=0.5),
+            panel.grid.minor.x=element_blank(),
+            panel.grid.major.x=element_blank(),
+            panel.grid.minor.y=element_blank(),
+            panel.grid.major.y=element_blank(),
+            plot.title = element_text())+
+      ggtitle(x)+
+      xlab("Julian Date")+
+      ylab("Flower Species"))
+  
+
+}
+
+dev.off()
+
+
+#write to dataset....now need to combine back with master data
+write.xlsx(newcirsium2, file = "cirsiumdata.xlsx", sheetName = "ML-Classified Cirsium Dataset")
+newcirsiumreadme<-"This dataset was produced by classifying Cirsium spp. unknowns from the cleaned SFFF dataset but Julian date using a bound-constraint support vector machine classification (C-bsvc)"
+write.xlsx(newcirsiumreadme, file="cirsiumdata.xlsx", sheetName = "Readme", append= TRUE)
+
+```

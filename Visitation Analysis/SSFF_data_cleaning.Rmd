@@ -1,0 +1,177 @@
+---
+title: "Data Cleaning Sex Specific Foraging Frittilary FIG"
+author: "Matthew Chmielewski"
+date:  '`r format(Sys.time(), "%A, %d %B, %Y")`'
+output: pdf_document
+editor_options: 
+  chunk_output_type:console
+---
+  
+  Load Libraries
+```{r}
+packages <- c("xlsx", "dplyr", "purrr", "ggplot2")
+suppressMessages(suppressWarnings(sapply(packages, require, character.only=TRUE, quietly=TRUE)))
+```
+
+Load data and check headings and check for truncation
+```{r}
+SSFFdata<-read.xlsx("Regal_ALL1998_2018.xlsx", sheetIndex=1)
+head(SSFFdata)
+length(SSFFdata$Year)
+```
+Check for spelling errors in plant binomials
+```{r}
+levels(SSFFdata$NectarPlantLatinName)
+```
+
+Fix typos/misspelled Plant binomials and common names
+```{r}
+SSFF_clean<-map_df(SSFFdata, ~ gsub("Achillea millifolium", "Achillea millefolium", .x))
+SSFF_clean<-map_df(SSFF_clean, ~ gsub("Asclepias incarnata ", "Asclepias incarnata", .x))
+SSFF_clean<-map_df(SSFF_clean, ~ gsub("Ascelpias incarnata", "Asclepias incarnata", .x))
+SSFF_clean<-map_df(SSFF_clean, ~ gsub("Asclepias tuberosa ", "Asclepias tuberosa", .x))
+SSFF_clean<-map_df(SSFF_clean, ~ gsub("Centaurea spp.", "Centaurea spp", .x))
+SSFF_clean<-map_df(SSFF_clean, ~ gsub("Field Thistle ", "Field Thistle", .x))
+SSFF_clean<-map_df(SSFF_clean, ~ gsub(" Common Milkweed", "Common Milkweed", .x))
+SSFF_clean<-map_df(SSFF_clean, ~ gsub("Canada Thistle ", "Canada Thistle", .x))
+SSFF_clean<-map_df(SSFF_clean, ~ gsub("Swamp milkweed", "Swamp Milkweed", .x))
+
+
+
+SSFF_clean$NectarPlantLatinName<-as.factor(SSFF_clean$NectarPlantLatinName)
+SSFF_clean$NectarPlantCommonName<-as.factor(SSFF_clean$NectarPlantCommonName)
+SSFF_clean$Julian<-as.numeric(SSFF_clean$Julian)
+SSFF_clean$Year<-as.factor(SSFF_clean$Year)
+
+
+levels(SSFF_clean$NectarPlantLatinName)
+levels(SSFF_clean$NectarPlantCommonName)
+```
+
+Examine conflicts between ID to genus vs species
+```{r}
+nrow(subset(SSFF_clean, SSFF_clean$NectarPlantLatinName == "Solidago spp/Centaurea spp"))
+nrow(subset(SSFF_clean, SSFF_clean$NectarPlantLatinName == "Solidago spp"))
+nrow(subset(SSFF_clean, SSFF_clean$NectarPlantLatinName == "Centaurea spp"))
+nrow(subset(SSFF_clean, SSFF_clean$NectarPlantLatinName == "Cirsium spp"))
+nrow(subset(SSFF_clean, SSFF_clean$NectarPlantLatinName == "Cirsium arvense"))
+nrow(subset(SSFF_clean, SSFF_clean$NectarPlantLatinName == "Cirsium discolor"))
+nrow(subset(SSFF_clean, SSFF_clean$NectarPlantLatinName == "Cirsium pumilum"))
+
+
+```
+
+*Solidago/Centaura* conflict seems best dealt with by dropping *Solidago spp/Centaurea spp* level (1 observation)
+*Cirsium* conflicts difficult to resolve as *C. discolor*, *C. pumilum* and *Cirsium spp* contain many observations. 
+
+
+
+Looking to the common names associated with *Cirsium spp* entries, it is possible to assign species to *Cirsium pumilum*.
+```{r}
+
+subset(SSFF_clean$NectarPlantLatinName, SSFF_clean$NectarPlantCommonName == "Pasture Thistle")
+
+SSFF_clean %>% mutate(NectarPlantLatinName = replace(NectarPlantLatinName, NectarPlantCommonName=="Pasture Thistle", "Cirsium pumilum"))->SSFF2
+
+subset(SSFF2$NectarPlantLatinName, SSFF2$NectarPlantCommonName == "Pasture Thistle")
+
+SSFF2<-droplevels(SSFF2)
+
+levels(SSFF2$NectarPlantLatinName)
+
+
+
+
+```
+
+Plot Phenology of Flowering By Species By Year
+```{r}
+
+pdf("phenology_by_year.pdf")
+
+for (i in levels(SSFF2$Year)){
+x<-paste("Flowering Phenology at FIG in", i, sep=" ")
+
+plot(  
+totalflowerpheno1<-ggplot(data=subset(SSFF2, SSFF2$Year == i), aes(Julian, NectarPlantLatinName)) +
+  geom_point(fill = "darkgrey") +
+  theme_bw()+
+  theme(axis.title.x = element_text(),
+    axis.title.y = element_text(),
+    axis.text.x  = element_text(angle=90, vjust=0.5),
+    panel.grid.minor.x=element_blank(),
+    panel.grid.major.x=element_blank(),
+    panel.grid.minor.y=element_blank(),
+    panel.grid.major.y=element_blank(),
+    plot.title = element_text())+
+  ggtitle(x)+
+  xlab("Julian Date")+
+  ylab("Flower Species"))
+
+
+}
+
+dev.off()
+
+```
+
+create mean first and last flowering dates for *C. discolor* and *C. pumilum*
+```{r}
+filter(SSFF_clean, NectarPlantLatinName == "Cirsium pumilum") %>%
+  group_by(Year) %>%
+  summarise(max = max(Julian))-> CPmax
+CPmeanlast<-mean(CPmax$max)
+CPmeanlast
+
+
+filter(SSFF_clean, NectarPlantLatinName == "Cirsium discolor") %>%
+  group_by(Year) %>%
+  summarise(min = min(Julian))-> CDmin
+CDmeanfirst<-mean(CDmin$min)
+CDmeanfirst
+
+```
+
+plot phenology with bands showing average first and last flowering date for *C. pumilum* and *C. discolor*
+```{r}
+
+pdf("phenology_by_year2.pdf")
+
+for (i in levels(SSFF2$Year)){
+x<-paste("Flowering Phenology at FIG in", i, sep=" ")
+
+plot(  
+totalflowerpheno1<-ggplot(data=subset(SSFF2, SSFF2$Year == i), aes(Julian, NectarPlantLatinName)) +
+  geom_point(fill = "darkgrey") +
+  geom_vline(xintercept = CDmeanfirst, color = "blue")+
+  geom_vline(xintercept = CPmeanlast, color = "purple")+
+  theme_bw()+
+  theme(axis.title.x = element_text(),
+    axis.title.y = element_text(),
+    axis.text.x  = element_text(angle=90, vjust=0.5),
+    panel.grid.minor.x=element_blank(),
+    panel.grid.major.x=element_blank(),
+    panel.grid.minor.y=element_blank(),
+    panel.grid.major.y=element_blank(),
+    plot.title = element_text())+
+  ggtitle(x)+
+  xlab("Julian Date")+
+  ylab("Flower Species"))
+
+
+}
+
+dev.off()
+
+```
+
+
+Write Datset to file
+```{r}
+write.xlsx(SSFF2, file = "SSFF_cleaned_5_18_2021.xlsx", sheetName="Cleaned SFFF Data")
+ssffreadme<-"This dataset cleans the orginal data provided by dealing with input errors due to spelling and drops one genus-level ambiguity involving a Solidago spp/Centaurea spp. observation"
+write.xlsx(ssffreadme, file = "SSFF_cleaned_5_18_2021.xlsx", sheetName="Readme", append = TRUE)
+write.csv(SSFF_clean, file = "SSFFclass.csv")
+
+
+```
