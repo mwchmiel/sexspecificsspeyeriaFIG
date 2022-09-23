@@ -23,7 +23,6 @@ Nectar analysis contains
 Code:
 
 - nectar.Rmd: Code for analyzing nectar concentrations and producing figures for the manuscript<br>
-- cormatrix.r: Code pulled into nectar.Rmd to make correlation heatmap<br>
 -
 Data:
 - concdata.xlsx: concentrations of nectar compounds
