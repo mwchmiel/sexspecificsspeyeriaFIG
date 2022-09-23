@@ -54,8 +54,6 @@ ssff_data$Year<-as.factor(ssff_data$Year)
 nrow(ssff_data)
 ssff_data
 
-#droplevels(ssff_data[ssff_data$Year != 2001 & ssff_data$Year != 2018,])
-
 
 colors<-wes_palette(name= "Zissou1", n= 10, type = "continuous")
 ```
@@ -241,7 +239,6 @@ dev.off()
 
 Creates Male and Female visits per day, as well as sex ratios per julian day by year, plots these
 ```{r}
-###full###
 
 phenology_summary_full<-ssff_data %>% group_by(Year, Julian, Sex) %>% summarise(length(NectarPlantLatinName))
 colnames(phenology_summary_full)
@@ -993,10 +990,6 @@ library(lme4)
 library(lmerTest)
 
 
-
-anova(aov(Species~Year+Sex, data =ESN))
-
-
 randomESNmod<-lmer(Species~Sex+(1|Year), data =ESN)
 summary(randomESNmod)
 
@@ -1014,58 +1007,29 @@ data.outlierdrop<-ESN[ ESN$Year != 2009,]
 mod.outlierdrop<-lmer(Species~Sex+(1|Year), data =data.outlierdrop)
 summary(mod.outlierdrop)
 acf(residuals(mod.outlierdrop))
-plot(residuals(mod.outlierdrop))
 
-testing<-lm(Species~Sex, data =data.outlierdrop)
 
-residuals(randomESNmod)
+dwmod<-lm(Species~Sex, data =data.outlierdrop)
 
-plot(residuals(randomESNmod), xaxt = 'n' )
-axis(side = 1, at=1:40)
-
-ESN$residuals<-residuals(randomESNmod)
-data.outlierdrop$residuals<-residuals(mod.outlierdrop)
-
-ggplot(ESN, aes(Year, residuals))+geom_point(aes(fill = Sex), shape = 21, size = 3)+theme_bw()+ggtitle("Full")
-ggplot(data.outlierdrop, aes(Year, residuals))+geom_point(aes(fill = Sex), shape = 21, size = 3)+theme_bw()+ggtitle("outlierdrop")
 
 acf(residuals(randomESNmod))
-
-
-durbinWatsonTest(testing, simulate = TRUE, max.lag = 15)
+durbinWatsonTest(dwmod, simulate = TRUE, max.lag = 15)
 
 
 ###########dropping 2009 from dataset above removed lag 5 autocorrelation structure. 
 
 ESNoverlap
 
-testingoverlap<-lm(Species~Sex, data = ESNoverlap)
+
+dwmod.overlap<-lm(Species~Sex, data =ESNoverlap)
 
 randomESNmodoverlap<-lmer(Species~Sex+(1|Year), data =ESNoverlap)
 randomESNmodoverlap
 
 summary(randomESNmodoverlap)
-?acf
-durbinWatsonTest(testingoverlap, max.lag = 5)
+durbinWatsonTest(dwmod.overlap, max.lag = 5)
 acf(residuals(randomESNmodoverlap))
-plot(residuals(randomESNmodoverlap))
 
-glsmod.esn<-gls(Species~Sex, correlation = corARMA(p=5), data = ESN)
-
-summary(glsmod.esn)
-acf(residuals(glsmod.esn))
-plot(residuals(glsmod.esn))
-
-plot(resid(randomESNmod))
-plot(resid(lm(Species~Sex+Year, data = ESN)))
-plot(Species~Year, data = ESN)
-
-qqnorm(resid(lm(Species~Sex+Year, data = ESN)))
-
-aov(Species~Year, data = ESN)
-summary(lm(Species~Year, data = ESN))
-summary(randomESNmod)
-var(ESN$Species)
 ```
 
 
