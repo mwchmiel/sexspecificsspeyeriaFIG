@@ -9,13 +9,13 @@ editor_options:
 
  Load Libraries
 ```{r}
-packages <- c("xlsx", "purrr", "ggplot2", "dplyr", "RColorBrewer", "cowplot", "vegan", "lme4", "bipartite", "lubridate", "tidyr")
+packages <- c("xlsx", "purrr", "ggplot2", "dplyr", "RColorBrewer", "cowplot", "vegan", "lme4", "bipartite", "lubridate", "tidyr", "ggridges", "forcats", "MetBrewer", "wesanderson", "car")
 suppressMessages(suppressWarnings(sapply(packages, require, character.only=TRUE, quietly=TRUE)))
 ```
 
 
 
-load cleaned data, load classified Cirsium data, and replace old Cirsium spp values with newly classified values
+load cleaned data, load classified Cirsium data, and replace old Cirsium spp values with newly classified values, create color palette
 ```{r}
 ssffdata<-read.xlsx("SSFF_cleaned_5_18_2021.xlsx", sheetIndex = 1)
 cirsiumdata<-read.xlsx("cirsiumdata.xlsx", sheetIndex = 1)
@@ -45,80 +45,27 @@ ssff_data$Date<-as.numeric(ssff_data$Date)
 ssff_data$fixeddate<-as.Date(ssff_data$Date, origin = "1899-12-30")
 ssff_data$week<-week(ssff_data$fixeddate)
 
-ssff_data
+ssff_data<-ssff_data[ssff_data$NectarPlantLatinName != "Solidago spp/Centaurea spp",]
+
 
 ssff_data$Sex<-as.factor(ssff_data$Sex)
 ssff_data$Year<-as.factor(ssff_data$Year)
+
+nrow(ssff_data)
+ssff_data
+
+#droplevels(ssff_data[ssff_data$Year != 2001 & ssff_data$Year != 2018,])
+
+
+colors<-wes_palette(name= "Zissou1", n= 10, type = "continuous")
 ```
 
 
-plot each year's visitation by sex
-```{r}
-
-pdf("SSFF_annual_visitation.pdf")
-
-for (i in levels(ssff_data$Year)){
-x<-paste("Visitation Phenology at FIG in", i, sep=" ")
- 
-plot(totalflowerpheno1<-ggplot(data=subset(ssff_data, ssff_data$Year == i), aes(Julian, NectarPlantLatinName)) +
-  geom_jitter(aes(fill = Sex), alpha = 0.6, shape = 21, size = 2) +
-  scale_fill_manual(values = c("#D95F02", "#7570B3"))+
-  theme_bw()+
-  theme(axis.title.x = element_text(),
-    axis.title.y = element_text(),
-    axis.text.x  = element_text(angle=90, vjust=0.5),
-    panel.grid.minor.x=element_blank(),
-    panel.grid.major.x=element_blank(),
-    panel.grid.minor.y=element_blank(),
-    panel.grid.major.y=element_blank(),
-    plot.title = element_text())+
-  ggtitle(x)+
-  xlab("Julian Date")+
-  ylab("Flower Species"))
-
-
-
-}
-
-dev.off()
-
-```
-
-
-plot each year's visitation by sex on one page
-```{r}
-
-pdf("SSFF_annual_visitation2.pdf")
-
- 
-ggplot(data=ssff_data, aes(Julian, NectarPlantLatinName, fill = Sex)) +
-  geom_jitter(alpha = 0.6, shape = 21, size = 2) +
-  facet_wrap(~Year)+
-  scale_fill_manual(values = c("#D95F02", "#7570B3"))+
-  theme_bw()+
-  theme(axis.title.x = element_text(),
-    axis.title.y = element_text(),
-    axis.text.x  = element_text(angle=90, vjust=0.5),
-    panel.grid.minor.x=element_blank(),
-    panel.grid.major.x=element_blank(),
-    panel.grid.minor.y=element_blank(),
-    panel.grid.major.y=element_blank(),
-    plot.title = element_text())+
-  xlab("Julian Date")+
-  ylab("Flower Species")
-
-
-
-
-dev.off()
-```
-
-
-This section computes the observed Morisita-Horn dissimilarity index for the observed species association webs, and determines whether there is temporal correlation
+This section computes the observed Morisita-Horn dissimilarity index for the observed species association webs, looks for pattern in MH over time
 ```{r}
 
 diffdata<-ssff_data %>% group_by(Site, Sex, Year, NectarPlantLatinName)  %>% summarise(n=length(NectarPlantLatinName))
-diffdata
+
 
 
 visitbyyear<-frame2webs(as.data.frame(diffdata), varnames = c("NectarPlantLatinName", "Sex", "Year", "n"))
@@ -145,12 +92,8 @@ diffbyyear
 
 
 mhdiss<-as.numeric(unlist(diffbyyear))
-
 mhdiss<-as.data.frame(mhdiss)
-
 mhdiss$year<-names(visitbyyear)
-mhdiss
-
 mhdiss$year<-as.numeric(mhdiss$year)
 
 
@@ -177,6 +120,13 @@ pdf("mgdistplot.pdf")
 mhdistplot
 dev.off()
 
+
+#examine MH dissimilarity across years and check for lag structure
+summary(lm(mhdiss~as.numeric(year), data = mhdiss))
+acf(residuals(lm(mhdiss~as.numeric(year), data = mhdiss)))
+durbinWatsonTest(lm(mhdiss~as.numeric(year), data = mhdiss), max.lag = 5)
+
+
 ```
 
 *Full Dataset*
@@ -191,7 +141,11 @@ nulltotalloop<-data.frame(matrix(nrow = 1000))
 nullmeans<-c()
 nullCI<-c()
 
-for (z in 1:21){
+visitbyyear
+
+
+head(testnull)
+for (z in 1:length(visitbyyear)){
 testnull<-nullmodel(visitbyyear[[z]])
 
 nulldifftest<-vector(mode = "list", length = length(testnull))
@@ -215,7 +169,7 @@ nulltotalloop<-cbind(nulltotalloop, nullmhdiss)
 nulltotalloop<-nulltotalloop[,-1]
 colnames(nulltotalloop)<-names(visitbyyear)
 
-nullbounds<-data.frame(matrix(nrow = 21))
+nullbounds<-data.frame(matrix(nrow = length(visitbyyear)))
 
 nullbounds$nullmeans<-nullmeans
 nullbounds$nullCI<-nullCI
@@ -285,60 +239,107 @@ dev.off()
 
 ```
 
+Creates Male and Female visits per day, as well as sex ratios per julian day by year, plots these
+```{r}
+###full###
+
+phenology_summary_full<-ssff_data %>% group_by(Year, Julian, Sex) %>% summarise(length(NectarPlantLatinName))
+colnames(phenology_summary_full)
+phenology_summary_full<-phenology_summary_full %>% rename(visits = "length(NectarPlantLatinName)" )
+
+phenology_summary_full
+fullsexratiodata<-spread(phenology_summary_full, Sex, visits)
+fullsexratiodata[is.na(fullsexratiodata)]<-0
+
+fullsexratiodata$ratio<-fullsexratiodata$FEMALE/(fullsexratiodata$FEMALE+fullsexratiodata$MALE)
 
 
-*Overlap Truncation: Only includes data for the part of the year in which there are at least one female and male*
+pdf(file = "sex_ratio_over_time_full.pdf", width = 12)
+ggplot(data=fullsexratiodata, aes(Julian, ratio))+
+ geom_point()+facet_wrap(facets=  fullsexratiodata$Year)
+dev.off()
 
-This truncated dataset deals with phenology by only including data from the period in which both females and males are present in the field.
+pdf(file = "sex_ratio_combined_full.pdf", width = 12)
+ggplot(data=fullsexratiodata, aes(Julian, ratio))+
+ geom_point()
+dev.off()
+```
+
+
+*Overlap Dataset*
+
+Identifies the first and last days in any given year in which females are at least 25% and 75%, respectively, of the observed visitations in order to bound new
+overlap dataset
 
 ```{r}
 
 
-overlapdata<-ssff_data
 
+newdata<-data.frame(matrix(ncol = 5, nrow = 0))
+newdata
 
-outoverlap<-data.frame()
+for( i in levels(fullsexratiodata$Year)){
+  year<-i
+  start<-min(which(fullsexratiodata[fullsexratiodata$Year == year,]$ratio > .25 &fullsexratiodata[fullsexratiodata$Year == year,]$ratio < .75))
+end
+end<-max(which(fullsexratiodata[fullsexratiodata$Year == year,]$ratio > .25 &fullsexratiodata[fullsexratiodata$Year == year,]$ratio < .75))
 
-for (i in levels(overlapdata$Year)){
-  
-  overlapyear<-subset(overlapdata, Year == i)
-        
-  maleoverlap<-subset(overlapyear, Sex == "MALE")
-  femaleoverlap<-subset(overlapyear, Sex == "FEMALE")
-  
-  malemax<-max(maleoverlap$Julian)
-  femalemin<-min(femaleoverlap$Julian)
-  
-  annualoverlap<-subset(overlapyear, Julian >= femalemin & Julian <= malemax)
+yearframe<-fullsexratiodata[fullsexratiodata$Year == year, ][start:end,]
 
+newdata<-rbind(newdata, yearframe)
 
-outoverlap<-rbind(outoverlap, annualoverlap)
-  
   
 }
 
-outoverlap
+fullsexratiodata
+
+pdf(file = "newoverlap.pdf")
+ggplot(newdata, aes(Julian, ratio))+geom_point()+facet_wrap(facets= newdata$Year)
+dev.off()
 
 
-plot(Julian~Sex, data=outoverlap)
-plot(Julian~Sex, data=ssff_data)
+newdata$Year.Julian<-paste(newdata$Year, newdata$Julian)
+newdata$Year.Julian
+  
+newdata<-unite(newdata, Julian.Year, c(Year, Julian), remove = FALSE)
+newdata
+
+overlapbounds<-overlapsexratiodata%>%group_by(Year)%>% summarize(max.julian = max(Julian), min.julian = min(Julian))
 
 
+pdf(file = "cutoffbounds.pdf", width = 12)
+ggplot(fullsexratiodata)+aes(x= Julian, y = ratio)+geom_point()+facet_wrap(facets = vars(Year))+
+geom_vline(data = overlapbounds, aes(xintercept = max.julian), color = "red", linetype = 2)+
+geom_vline(data = overlapbounds, aes(xintercept = min.julian), color = "red", linetype = 2)
+dev.off()
 
 
 
 ```
 
-Plotting data involving only considering dates when males and female overlap
-```{r}
-pdf("SSFF_annual_visitation_overlap.pdf")
 
-for (i in levels(outoverlap$Year)){
-x<-paste("Visitation Phenology of overlapping data at FIG in", i, sep=" ")
- 
-plot(totalflowerphenooverlap<-ggplot(data=subset(outoverlap, outoverlap$Year == i), aes(Julian, NectarPlantLatinName)) +
-  geom_jitter(aes(fill = Sex), alpha = 0.6, shape = 21, size = 2) +
-  scale_fill_manual(values = c("#D95F02", "#7570B3"))+
+Using the previously generated 0.25-0.75 sex ratio bounded, generates new overlap dataframe from master dataset. Also drops 2001 and 2018 from overlap dataset due to
+these years now being represented only by observations on a single julian day. 
+```{r}
+
+head(ssff_data)
+newdata
+
+ssff_data$Year.Julian<-paste(ssff_data$Year, ssff_data$Julian)
+
+overlapdata<-ssff_data[ssff_data$Year.Julian %in% newdata$Year.Julian,]
+
+
+overlapdata[overlapdata$Year == 2001,]
+#overlapjulian<-ssff_data[ssff_data$Year.Julian %in% newdata$Year.Julian,]
+
+#overlapdata<-droplevels(overlapjulian[overlapjulian$Year != 2001 & overlapjulian$Year != 2018,])
+overlapdata[overlapdata$Year == 2009,]
+
+
+overlapridges1<-ggplot(data=overlapdata, aes(Julian, Year)) +
+  geom_density_ridges(aes(fill = Sex), alpha = 0.6) +
+  scale_fill_manual(values = c(colors[10], colors[1]))+
   theme_bw()+
   theme(axis.title.x = element_text(),
     axis.title.y = element_text(),
@@ -348,25 +349,144 @@ plot(totalflowerphenooverlap<-ggplot(data=subset(outoverlap, outoverlap$Year == 
     panel.grid.minor.y=element_blank(),
     panel.grid.major.y=element_blank(),
     plot.title = element_text())+
-  ggtitle(x)+
+  ggtitle("Sex-Specific Visitation Phenology by Year at FIG, Overlap Dataset")+
   xlab("Julian Date")+
-  ylab("Flower Species"))
+  ylab("Year")
+
+pdf(file="overlapridges1.pdf")
+overlapridges1
+dev.off()
 
 
 
-}
+newoverlapsummary<-overlapdata %>% group_by(Year, Julian, Sex) %>% summarise(length(NectarPlantLatinName))
+colnames(newoverlapsummary)
+newoverlapsummary<-newoverlapsummary %>% rename(visits = "length(NectarPlantLatinName)" )
+
+newoverlapsummary
+
+pdf("newoverlapvisits.pdf")
+ggplot(data=newoverlapsummary, aes(Julian, visits))+
+ geom_point(aes(color = newoverlapsummary$Sex))+facet_wrap(facets=  newoverlapsummary$Year)
 
 dev.off()
 
 
+
+
 ```
 
+Generates overlap data male and female visits as well as visits per julian day by year and plots these
+
+```{r}
+phenology_summary_overlap<-overlapdata %>% group_by(Year, Julian, Sex) %>% summarise(length(NectarPlantLatinName))
+colnames(phenology_summary_overlap)
+phenology_summary_overlap<-phenology_summary_overlap %>% rename(visits = "length(NectarPlantLatinName)" )
+
+
+overlapsexratiodata<-spread(phenology_summary_overlap, Sex, visits)
+overlapsexratiodata[is.na(overlapsexratiodata)]<-0
+
+overlapsexratiodata$ratio<-overlapsexratiodata$FEMALE/(overlapsexratiodata$FEMALE+overlapsexratiodata$MALE)
+overlapsexratiodata$ratio
+
+subset(overlapsexratiodata, Year == 2013)
+
+
+pdf(file = "sex_ratio_over_time_overlap.pdf", width = 12)
+ggplot(data=overlapsexratiodata, aes(Julian, ratio))+
+ geom_point()+facet_wrap(facets=  overlapsexratiodata$Year)
+dev.off()
+
+pdf(file = "sex_ratio_combined_overlap.pdf", width = 12)
+ggplot(data=overlapsexratiodata, aes(Julian, ratio))+
+ geom_point()
+dev.off()
+
+```
+
+Ridgeplot of Male and Female occurrence data for full dataset by year
+```{r}
+totalridges<-ggplot(data=ssff_data, aes(Julian, Year)) +
+  geom_density_ridges(aes(fill = Sex), alpha = 0.6, bandwidth = 16.5) +
+  scale_fill_manual(values = c(colors[10], colors[1]))+
+  theme_bw()+
+  theme(axis.title.x = element_text(),
+    axis.title.y = element_text(),
+    axis.text.x  = element_text(angle=90, vjust=0.5),
+    panel.grid.minor.x=element_blank(),
+    panel.grid.major.x=element_blank(),
+    panel.grid.minor.y=element_blank(),
+    panel.grid.major.y=element_blank(),
+    plot.title = element_text())+
+  ggtitle("Sex-specific Visitation Phenology by Year at FIG, Full Dataset")+
+  xlab("Julian Date")+
+  ylab("Year")
+
+pdf(file = "totalridges.pdf")
+totalridges
+dev.off()
+
+
+ssff_dataESA<-droplevels(subset(ssff_data, ssff_data$Year == 2009 | ssff_data$Year == 2013))
+ssff_dataESA<-droplevels(subset(ssff_data, ssff_data$Year == 2009))
+
+head(ssff_dataESA)
+
+#pull out example year for ESA slides
+ESAridges<-ggplot(data=ssff_dataESA, aes(Julian, Year)) +
+  geom_density_ridges(aes(fill = Sex), alpha = 0.6) +
+  scale_fill_manual(values = c(colors[10], colors[1]))+
+  theme_bw()+
+  theme(axis.title.x = element_text(),
+    axis.title.y = element_text(),
+    axis.text.x  = element_text(angle=90, vjust=0.5),
+    panel.grid.minor.x=element_blank(),
+    panel.grid.major.x=element_blank(),
+    panel.grid.minor.y=element_blank(),
+    panel.grid.major.y=element_blank(),
+    plot.title = element_text())+
+  ggtitle("Sex-specific Visitation Phenology by Year at FIG, Example subset")+
+  xlab("Julian Date")+
+  ylab("Year")
+
+pdf(file = "esaridges.pdf")
+ESAridges
+dev.off()
+```
+
+
+Ridgeplot of Male and Female occurrence data for overlap dataset by year
+```{r}
+overlapridges<-ggplot(data=overlapdata[-1367:-1380,], aes(Julian, Year)) +
+  geom_density_ridges(aes(fill = Sex), alpha = 0.6, bandwidth= 16.5) +
+  scale_y_discrete(labels = levels(overlapdata$Year))+
+  scale_fill_manual(values = c(colors[10], colors[1]))+
+  theme_bw()+
+  theme(axis.title.x = element_text(),
+    axis.title.y = element_text(),
+    axis.text.x  = element_text(angle=90, vjust=0.5),
+    panel.grid.minor.x=element_blank(),
+    panel.grid.major.x=element_blank(),
+    panel.grid.minor.y=element_blank(),
+    panel.grid.major.y=element_blank(),
+    plot.title = element_text())+
+  ggtitle("Sex-Specific Visitation Phenology by Year at FIG, Overlap Dataset")+
+  xlab("Julian Date")+
+  ylab("Year")
+
+pdf(file="overlapridges.pdf")
+overlapridges
+dev.off()
+
+#note this drops values from 2018 in order to plot 2018 as blank (probably a better way to drop this ridge while maintaining 2018 on y axis but this works for now)
+```
 
 
 Create M-H dissimilarity for only data that overlap males and females
 ```{r}
 
-diffdataoverlap<-outoverlap %>% group_by(Site, Sex, Year, NectarPlantLatinName)  %>% summarise(n=length(NectarPlantLatinName))
+diffdataoverlap<-overlapdata %>% group_by(Site, Sex, Year, NectarPlantLatinName)  %>% summarise(n=length(NectarPlantLatinName))
 diffdataoverlap
 
 
@@ -426,26 +546,29 @@ pdf("mgdistplotoverlap.pdf")
 mhdistplotoverlap
 dev.off()
 
+#look for pattern over years, check for lag structure
 summary(lm(mhdissoverlap~as.numeric(year), data = mhdissoverlap))
+acf(residuals(lm(mhdissoverlap~as.numeric(year), data = mhdissoverlap)))
+durbinWatsonTest(lm(mhdissoverlap~as.numeric(year), data = mhdissoverlap), max.lag = 5)
 
 mhdissoverlap
 ```
 
 
-This creates null distributions for overlap dataset. 
+This creates null distributions for overlap dataset. Plots final Figure 1 including observed and null model MH for full and overlap datasets
 ```{r}
 nulltotalloopoverlap<-data.frame(matrix(nrow = 1000))
 nullmeansoverlap<-c()
 nullCIoverlap<-c()
 
-for (z in 1:21){
+for (z in 1:length(visitbyyearoverlap)){
 testnulloverlap<-nullmodel(visitbyyearoverlap[[z]])
 
 nulldifftestoverlap<-vector(mode = "list", length = length(testnulloverlap))
 for (i in 1:length(testnulloverlap)){
 
   
-  nulldifftestoverlap[i]<-as.list(vegdist(t(testnulloverlap[[i]]), method = "horn"))
+nulldifftestoverlap[i]<-as.list(vegdist(t(testnulloverlap[[i]]), method = "horn"))
 }
 
 nulldifftestoverlap
@@ -462,7 +585,7 @@ nulltotalloopoverlap<-cbind(nulltotalloopoverlap, nullmhdissoverlap)
 nulltotalloopoverlap<-nulltotalloopoverlap[,-1]
 colnames(nulltotalloopoverlap)<-names(visitbyyearoverlap)
 
-nullboundsoverlap<-data.frame(matrix(nrow = 21))
+nullboundsoverlap<-data.frame(matrix(nrow = length(visitbyyearoverlap)))
 
 nullboundsoverlap$nullmeansoverlap<-nullmeansoverlap
 nullboundsoverlap$nullCIoverlap<-nullCIoverlap
@@ -537,7 +660,8 @@ mhcombined1$nullCI[which(mhcombined1$treat == "observedmh")]<-0
 
 mhcombined1
 
-mhcolors<-c("lightpink3", "dodgerblue1", "Red", "DarkBlue")
+#mhcolors<-c("lightpink3", "dodgerblue1", "Red", "DarkBlue")
+mhcolors<-colors[c(9,3,10,1)]
 
 nullmhdistplotcombinedoverlaptest<-ggplot(data=mhcombined1, aes(year, value)) +
   geom_point(aes(fill = treat), size = 3, shape = 21)+
@@ -559,15 +683,24 @@ nullmhdistplotcombinedoverlaptest<-ggplot(data=mhcombined1, aes(year, value)) +
 
 nullmhdistplotcombinedoverlaptest
 
-nullbounds
+nullboundsoverlap1<-nullboundsoverlap
 
-nullmhdistplotcombinedoverlap<-ggplot(data=nullboundsoverlap, aes(year, nullmeansoverlap)) +
-  geom_point(color = "lightpink3", size = 3)+
+nullboundsoverlap1[which(nullboundsoverlap1$year == 2001 | nullboundsoverlap1$year == 2018),1:2]<-as.numeric(NA)
+mhdissoverlap1<-mhdissoverlap
+
+mhdissoverlap1[which(mhdissoverlap1$year == 2001 | mhdissoverlap1$year == 2018),1:2]<-as.numeric(NA)
+nullboundsoverlap1
+
+nullmeansoverlap[c(4,21)]<-as.numeric(NA)
+nullCIoverlap[c(4,21)]<-as.numeric(NA)
+
+nullmhdistplotcombinedoverlap<-ggplot(data=nullboundsoverlap1, aes(year, nullmeansoverlap)) +
+  geom_point(color = colors[9], size = 3, shape = 17)+
   geom_errorbar(ymin = nullmeansoverlap - nullCIoverlap, ymax = nullmeansoverlap + nullCIoverlap)+
-  geom_point(data=mhdissoverlap, aes(as.factor(year), mhdissoverlap), shape = 21, fill = "Red", alpha = 0.7, size = 3)+
-  geom_point(data=nullbounds, aes(year, nullmeans), color = "dodgerblue1",size = 3)+
+  geom_point(data=mhdissoverlap1, aes(as.factor(year), mhdissoverlap), shape = 21, fill = colors[10], alpha = 0.7, size = 3)+
+  geom_point(data=nullbounds, aes(year, nullmeans), color = colors[3],size = 3, shape = 17)+
   geom_errorbar(ymin = nullmeans - nullCI, ymax = nullmeans + nullCI)+
-  geom_point(data=mhdiss, aes(as.factor(year), mhdiss), shape = 21, fill = "DarkBlue", alpha= 0.7, size = 3)+
+  geom_point(data=mhdiss, aes(as.factor(year), mhdiss), shape = 21, fill = colors[1], alpha= 0.7, size = 3)+
   geom_vline(xintercept=seq(1.5, length(unique(nullboundsoverlap$year))-0.5, 1), lwd=0.5,linetype = 3, colour="gray")+
   theme_bw()+
   theme(axis.title.x = element_text(size  = 12),
@@ -578,6 +711,7 @@ nullmhdistplotcombinedoverlap<-ggplot(data=nullboundsoverlap, aes(year, nullmean
     panel.grid.minor.y=element_blank(),
     panel.grid.major.y=element_blank(),
     plot.title = element_text())+
+  scale_y_continuous(limits = c(0, 1))+
   ggtitle("")+
   xlab("Year")+
   ylab("Morisita-Horn Dissimilarity")
@@ -592,11 +726,79 @@ dev.off()
 
 
 
+
+mhfulldataplot<-ggplot(data=nullbounds, aes(year, nullmeans)) +
+  geom_point(color = colors[3],size = 3, shape = 17)+
+  geom_errorbar(ymin = nullmeans - nullCI, ymax = nullmeans + nullCI)+
+  geom_point(data=mhdiss, aes(as.factor(year), mhdiss), shape = 21, fill = colors[1], alpha= 0.7, size = 3)+
+  geom_vline(xintercept=seq(1.5, length(unique(nullboundsoverlap$year))-0.5, 1), lwd=0.5,linetype = 3, colour="gray")+
+  theme_bw()+
+  theme(axis.title.x = element_text(size  = 12),
+    axis.title.y = element_text(size = 12),
+    axis.text.x  = element_text(angle=90, vjust=0.5, size =12),
+    panel.grid.minor.x=element_blank(),
+    panel.grid.major.x=element_blank(),
+    panel.grid.minor.y=element_blank(),
+    panel.grid.major.y=element_blank(),
+    plot.title = element_text())+
+  scale_y_continuous(limits = c(0, 1))+
+  ggtitle("")+
+  xlab("Year")+
+  ylab("Morisita-Horn Dissimilarity")
+
+
+mhfulldataplot
+
+pdf(file = "mhfullsolo.pdf")
+mhfulldataplot
+dev.off()
+
+
+
+mhoverlapdataplot<-ggplot(data=nullboundsoverlap1, aes(year, nullmeansoverlap)) +
+  geom_point(color = colors[9], size = 3, shape = 17)+
+  geom_errorbar(ymin = nullmeansoverlap - nullCIoverlap, ymax = nullmeansoverlap + nullCIoverlap)+
+  geom_point(data=mhdissoverlap1, aes(as.factor(year), mhdissoverlap), shape = 21, fill = colors[10], alpha = 0.7, size = 3)+
+  geom_vline(xintercept=seq(1.5, length(unique(nullboundsoverlap$year))-0.5, 1), lwd=0.5,linetype = 3, colour="gray")+
+  theme_bw()+
+  theme(axis.title.x = element_text(size  = 12),
+    axis.title.y = element_text(size = 12),
+    axis.text.x  = element_text(angle=90, vjust=0.5, size =12),
+    panel.grid.minor.x=element_blank(),
+    panel.grid.major.x=element_blank(),
+    panel.grid.minor.y=element_blank(),
+    panel.grid.major.y=element_blank(),
+    plot.title = element_text())+
+  scale_y_continuous(limits = c(0, 1))+
+  ggtitle("")+
+  xlab("Year")+
+  ylab("Morisita-Horn Dissimilarity")
+
+
+mhoverlapdataplot
+
+pdf(file = "mhoverlapsolo.pdf")
+mhoverlapdataplot
+dev.off()
+
+  
+####calculate change in mh for ms
+changeinmh<-mhdiss$mhdiss-mhdissoverlap$mhdissoverlap
+mean(changeinmh)
+sd(changeinmh)/sqrt(19)
+
+mean(mhdissoverlap$mhdissoverlap)
+sd(mhdissoverlap$mhdissoverlap)/sqrt(19)
+
+
+
+
+
 ```
 
 
 
-This calculates effective species number and species richness for the full and subset datasets, and determines some basic statistics regarding ESN and richness 
+This calculates effective species number and species richness for the full and subset datasets, and determines some basic statistics regarding ESN and richness, looks for autocorrelation structure 
 ```{r}
 
 ESN<-data.frame()
@@ -624,7 +826,7 @@ ESN$Year<-names(visitbyyear)
 colnames(richm)<-"richness"
 colnames(richf)<-"richness"
 ESN$richness<-as.numeric(unlist(rbind(richf, richm)))
-ESN
+ESN$Sex<-as.factor(ESN$Sex)
 
 mean(subset(ESN$richness, ESN$Sex == "Female"))
 
@@ -633,7 +835,8 @@ plot(richness~Sex, data = ESN, cex.lab = 2, cex.axis = 2)
 
 
 
-ESN$Sex<-as.factor(ESN$Sex)
+
+
 ESNplot<-ggplot(data=ESN, aes(Year, Species)) +
   geom_point(aes(fill = Sex), alpha = 0.6, shape = 21, size = 2) +
   scale_fill_manual(values = c("#D95F02", "#7570B3"))+
@@ -739,46 +942,119 @@ length(which((subset(ESN, ESN$Sex == "Female")$Species-subset(ESN, ESN$Sex == "M
 
 #total datset means and SE for ESN and richness
 mean(subset(ESN$Species, ESN$Sex == "Male"))
-sd(subset(ESN$Species, ESN$Sex == "Male"))/sqrt(21)
+sd(subset(ESN$Species, ESN$Sex == "Male"))/sqrt(19)
 mean(subset(ESN$Species, ESN$Sex == "Female"))
-sd(subset(ESN$Species, ESN$Sex == "Female"))/sqrt(21)
+sd(subset(ESN$Species, ESN$Sex == "Female"))/sqrt(19)
 
 mean(subset(ESN$richness, ESN$Sex == "Male"))
-sd(subset(ESN$richness, ESN$Sex == "Male"))/sqrt(21)
+sd(subset(ESN$richness, ESN$Sex == "Male"))/sqrt(19)
 mean(subset(ESN$richness, ESN$Sex == "Female"))
-sd(subset(ESN$richness, ESN$Sex == "Female"))/sqrt(21)
+sd(subset(ESN$richness, ESN$Sex == "Female"))/sqrt(19)
 
 
 #overlap datset means and SE for ESN and richness
 mean(subset(ESNoverlap$Species, ESNoverlap$Sex == "Male"))
-sd(subset(ESNoverlap$Species, ESNoverlap$Sex == "Male"))/sqrt(21)
+sd(subset(ESNoverlap$Species, ESNoverlap$Sex == "Male"))/sqrt(19)
 mean(subset(ESNoverlap$Species, ESNoverlap$Sex == "Female"))
-sd(subset(ESNoverlap$Species, ESNoverlap$Sex == "Female"))/sqrt(21)
+sd(subset(ESNoverlap$Species, ESNoverlap$Sex == "Female"))/sqrt(19)
 
 mean(subset(ESNoverlap$richness, ESNoverlap$Sex == "Male"))
-sd(subset(ESNoverlap$richness, ESNoverlap$Sex == "Male"))/sqrt(21)
+sd(subset(ESNoverlap$richness, ESNoverlap$Sex == "Male"))/sqrt(19)
 mean(subset(ESNoverlap$richness, ESNoverlap$Sex == "Female"))
-sd(subset(ESNoverlap$richness, ESNoverlap$Sex == "Female"))/sqrt(21)
+sd(subset(ESNoverlap$richness, ESNoverlap$Sex == "Female"))/sqrt(19)
+
+
+#
+ESN$dataset<-"full"
+ESNoverlap$dataset<-"overlap"
+ESN_join<-full_join(ESN[,-5], ESNoverlap)
+ESN_join
+
+ESNspread<-spread(ESN_join[,-4],dataset, Species)
+richnesspread<-spread(ESN_join[,-2],dataset, richness)
+colnames(ESNspread)<-c("sex", "year", "fullESN", "overlapESN")
+colnames(richnesspread)<-c("sex", "year", "fullrichness", "overlaprichness")
+
+ESNspread$ESNdiff<-(ESNspread$fullESN-ESNspread$overlapESN)
+ESNspread
+richnesspread$richnessdiff<-richnesspread$fullrichness-richnesspread$overlaprichness
+richnesspread
 
 
 
-####change in mh for ms
-changeinmh<-mhdiss$mhdiss-mhdissoverlap$mhdissoverlap
-mean(changeinmh)
-sd(changeinmh)
+diversityout<-left_join(ESNspread, richnesspread)
 
-mhdiss
+write.csv(diversityout, file = "diversitysummary.csv")
+```
 
+Models for ESN, richness
+```{r}
 library(lme4)
+library(lmerTest)
+
 
 
 anova(aov(Species~Year+Sex, data =ESN))
 
-plot(Species~Year, data =ESNtest)
-plot(richness~Year, data =ESN)
 
 randomESNmod<-lmer(Species~Sex+(1|Year), data =ESN)
-randomESNmod
+summary(randomESNmod)
+
+changeinmhgreateryears<-mhdiss[mhdiss$year %in% greateryears,]$mhdiss-mhdissoverlap[mhdissoverlap$year %in% greateryears,]$mhdissoverlap
+mean(changeinmhgreateryears)
+sd(changeinmh)/sqrt(11)
+
+outlieryears<-c(2003, 2009, 2014)
+
+nrow(ESN[ESN$Year != 2003 & ESN$Year != 2009 & ESN$Year != 2014,])
+
+data.outlierdrop<-ESN[ESN$Year != 2003 & ESN$Year != 2009 & ESN$Year != 2014,]
+data.outlierdrop<-ESN[ ESN$Year != 2009,]
+
+mod.outlierdrop<-lmer(Species~Sex+(1|Year), data =data.outlierdrop)
+summary(mod.outlierdrop)
+acf(residuals(mod.outlierdrop))
+plot(residuals(mod.outlierdrop))
+
+testing<-lm(Species~Sex, data =data.outlierdrop)
+
+residuals(randomESNmod)
+
+plot(residuals(randomESNmod), xaxt = 'n' )
+axis(side = 1, at=1:40)
+
+ESN$residuals<-residuals(randomESNmod)
+data.outlierdrop$residuals<-residuals(mod.outlierdrop)
+
+ggplot(ESN, aes(Year, residuals))+geom_point(aes(fill = Sex), shape = 21, size = 3)+theme_bw()+ggtitle("Full")
+ggplot(data.outlierdrop, aes(Year, residuals))+geom_point(aes(fill = Sex), shape = 21, size = 3)+theme_bw()+ggtitle("outlierdrop")
+
+acf(residuals(randomESNmod))
+
+
+durbinWatsonTest(testing, simulate = TRUE, max.lag = 15)
+
+
+###########dropping 2009 from dataset above removed lag 5 autocorrelation structure. 
+
+ESNoverlap
+
+testingoverlap<-lm(Species~Sex, data = ESNoverlap)
+
+randomESNmodoverlap<-lmer(Species~Sex+(1|Year), data =ESNoverlap)
+randomESNmodoverlap
+
+summary(randomESNmodoverlap)
+?acf
+durbinWatsonTest(testingoverlap, max.lag = 5)
+acf(residuals(randomESNmodoverlap))
+plot(residuals(randomESNmodoverlap))
+
+glsmod.esn<-gls(Species~Sex, correlation = corARMA(p=5), data = ESN)
+
+summary(glsmod.esn)
+acf(residuals(glsmod.esn))
+plot(residuals(glsmod.esn))
 
 plot(resid(randomESNmod))
 plot(resid(lm(Species~Sex+Year, data = ESN)))
@@ -790,61 +1066,29 @@ aov(Species~Year, data = ESN)
 summary(lm(Species~Year, data = ESN))
 summary(randomESNmod)
 var(ESN$Species)
-
-#################################################
-#can get (very tiny) variance from deprecated nlme:lme, functionally the same as 0 from lme4:lmer (see https://rpubs.com/bbolker/6226)
-library(nlme)
-
-randomESNold<-lme(Species~Sex, random = ~1|Year, data = ESN)
-randomESNold
-
-summary(randomESNold)
-varcovarrandom<-VarCorr(randomESNold)
-varcovarrandom
-varcovarsd<-varcovarrandom[,"StdDev"]
-varcovarsd
-
-as.numeric(varcovarrandom[1,"StdDev"])/as.numeric(varcovarrandom[2,"StdDev"])
-
-randomrichnessold<-lme(richness~Sex, random = ~1|Year, data = ESN)
-randomrichnessold
-
-summary(randomrichnessold)
-
-
-randomESNoverlap<-lme(Species~Sex, random = ~1|Year, data = ESNoverlap)
-summary(randomESNoverlap)
-
-randomrichnessoverlap<-lme(richness~Sex, random = ~1|Year, data = ESNoverlap)
-
-summary(randomrichnessoverlap)
-
-
-#within year variance is much greater than across year (whole dataset) variance
-#within sex variance is comparatively relatively small when compared with whole dataset variance
-#############################################
-
-fullcontrastESN<-t.test(subset(ESN, ESN$Sex == "Male")$Species, subset(ESN, ESN$Sex == "Female")$Species, paired = TRUE)
-
-overlapcontrastESN<-t.test(subset(ESNoverlap, ESNoverlap$Sex == "Male")$Species, subset(ESNoverlap, ESNoverlap$Sex == "Female")$Species, paired = TRUE)
-
-
-
-fullcontrastrichness<-t.test(subset(ESN, ESN$Sex == "Male")$richness, subset(ESN, ESN$Sex == "Female")$richness, paired = TRUE)
-
-overlapcontrastrichness<-t.test(subset(ESNoverlap, ESNoverlap$Sex == "Male")$richness, subset(ESNoverlap, ESNoverlap$Sex == "Female")$richness, paired = TRUE)
-
-fullcontrastrichness
-
-overlapcontrastrichness
-
 ```
 
 
 Chi^2 for M vs. F visitations to flowers
 ```{r}
+`%out%` <- function(a,b) ! a %in% b
 
-chi2fulldata<-ssffdata %>% group_by(Sex, NectarPlantLatinName) %>% tally(sort = TRUE)
+
+
+greateryears<-c(1998, 2003, 2004, 2005, 2006, 2007, 2008, 2009, 2012, 2014, 2015)
+lesseryears<-c(2000, 2002, 2013, 2016, 2017, 2018)
+nullyears<-c(1999, 2001, 2010, 2011)
+
+lesseryears1<-c(2000, 2002, 2013, 2016, 2017)
+nullyears1<-c(1999, 2010, 2011)
+
+
+
+#can subset dataset by years based on MH output with this
+#ssff_data[ssff_data$Year %in% lesseryears1,]
+
+chi2fulldata<-ssff_data %>% group_by(Sex, NectarPlantLatinName) %>% tally(sort = TRUE)
+
 
 chi2fulltable<-t(spread(chi2fulldata, NectarPlantLatinName, n)[,-1])
 colnames(chi2fulltable)<-c("Female", "Male")
@@ -852,9 +1096,14 @@ colnames(chi2fulltable)<-c("Female", "Male")
 chi2fulltable[is.na(chi2fulltable)] = 0
 chi2fulltable
 
-resultsfull<-chisq.test(chi2fulltable)
+resultsfull<-chisq.test(chi2fulltable, simulate.p.value =  FALSE)
+#this becomes Fisher's exact test
+
+resultsfull
 resultsfull$observed
 resultsfull$expected
+
+?chisq.test
 
 round(resultsfull$residuals, 3)
 
@@ -868,7 +1117,7 @@ write.csv(annualvisitationsummary, file = "visitationsummarybyyear.csv", row.nam
 ###############visualize relative magnitude of each plant-sex combo by plotting residuals
 library(corrplot)
 
-corrplot(resultsfull$residuals, is.corr = FALSE, col=colorRampPalette(c("#053061","white","#9f1228"))(300), tl.col = "black", cl.pos = "r", cl.ratio = 1.6, outline = TRUE)
+corrplot(resultsfull$residuals, is.corr = FALSE, col=colorRampPalette(c(colors[1],"white",colors[10]))(300), tl.col = "black", cl.pos = "r", cl.ratio = 1.6, outline = TRUE)
 
 
 
@@ -896,7 +1145,7 @@ colorlegend(xlim=c(3,6), ylim=c(1,10), corrscale, signif(c(seq(-11.41,13.49,2.49
 
 
 ############################overlap dataset
-chi2overlapdata<-outoverlap %>% group_by(Sex, NectarPlantLatinName) %>% tally(sort = TRUE)
+chi2overlapdata<-overlapdata[overlapdata$Year %in% greateryears,] %>% group_by(Sex, NectarPlantLatinName) %>% tally(sort = TRUE)
 
 chi2overlaptable<-t(spread(chi2overlapdata, NectarPlantLatinName, n)[,-1])
 colnames(chi2overlaptable)<-c("Female", "Male")
@@ -904,7 +1153,7 @@ colnames(chi2overlaptable)<-c("Female", "Male")
 chi2overlaptable[is.na(chi2overlaptable)] = 0
 chi2overlaptable
 
-resultsoverlap<-chisq.test(chi2overlaptable)
+resultsoverlap<-chisq.test(chi2overlaptable, simulate.p.value =  TRUE)
 resultsoverlap$observed
 resultsoverlap$expected
 
@@ -927,23 +1176,124 @@ corrplot(contriboverlap, is.corr = FALSE, col = "black", tl.col = "black", cl.po
 
 #overall chi2overlap is significant, and appears to be driven by mainly by asclepias tuberosa and cirsium discolor
 
+
+
+
+
 pdf("chi2overlapoutput.pdf")
 corrplot(resultsoverlap$residuals, is.corr = FALSE, col=colorRampPalette(c("#053061","white","#9f1228"))(300),tl.col = "black", cl.pos = "r", cl.ratio = 1.6, outline = TRUE)
 corrplot(contriboverlap, is.corr = FALSE, col = "black", tl.col = "black", cl.pos = "n")
 dev.off()
 
 max(resultsoverlap$residuals)
-corrscale<-colorRampPalette(c("#053061","white","#9f1228"))(300)
+corrscale<-colorRampPalette(c(colors[1],"white", colors[10]))(300)
 
 corrplot(resultsoverlap$residuals, is.corr = FALSE, col=colorRampPalette(c("#053061","white","#9f1228"))(300), tl.col = "black", cl.pos = "n", outline = TRUE)
 colorlegend(xlim=c(3,6), ylim=c(1,10), corrscale, signif(c(seq(-7.51,7.63,1.514)), 3), align="r", vertical=TRUE, addlabels=TRUE, cex= 0.75)
 
-pdf("chi2combinedrevised.pdf")
-corrplot(resultsfull$residuals, is.corr = FALSE, col=colorRampPalette(c("#053061","white","#9f1228"))(300), tl.col = "black", cl.pos = "n", outline = TRUE)
-colorlegend(xlim=c(3,6), ylim=c(1,10), corrscale, signif(c(seq(-11.41,13.49,2.49)), 4), align="r", vertical=TRUE, addlabels=TRUE, cex= 0.75)
 
-corrplot(resultsoverlap$residuals, is.corr = FALSE, col=colorRampPalette(c("#053061","white","#9f1228"))(300), tl.col = "black", cl.pos = "n", outline = TRUE)
-colorlegend(xlim=c(3,6), ylim=c(1,10), corrscale, signif(c(seq(-7.51,7.63,1.514)), 3), align="r", vertical=TRUE, addlabels=TRUE, cex= 0.75)
+
+##############only data where MH > null
+
+chi2greaterdata<- ssff_data[ssff_data$Year %in% greateryears,] %>% group_by(Sex, NectarPlantLatinName) %>% tally(sort = TRUE)
+
+chi2greatertable<-t(spread(chi2greaterdata, NectarPlantLatinName, n)[,-1])
+colnames(chi2greatertable)<-c("Female", "Male")
+
+chi2greatertable[is.na(chi2greatertable)] = 0
+chi2greatertable
+
+resultsgreater<-chisq.test(chi2greatertable, simulate.p.value =  TRUE)
+resultsgreater$observed
+resultsgreater$expected
+
+round(resultsgreater$residuals, 3)
+
+resultsgreater
+
+
+max(resultsgreater$residuals)
+corrplot(resultsgreater$residuals[order(abs(resultsgreater$residuals[,1]),decreasing=TRUE),], is.corr = FALSE, col=colorRampPalette(c("#053061","white","#9f1228"))(300), tl.col = "black", cl.pos = "n", outline = TRUE)
+colorlegend(xlim=c(3,6), ylim=c(1,10), corrscale, signif(c(seq(min(resultsgreater$residuals),max(resultsgreater$residuals),2)), 3), align="r", vertical=TRUE, addlabels=TRUE, cex= 0.75)
+
+
+###############combined output to pdf
+
+
+pdf("chi2combined.pdf")
+
+corrplot(resultsfull$residuals[order(abs(resultsfull$residuals[,1]),decreasing=TRUE),], is.corr = FALSE, col=colorRampPalette(c(colors[1],"white", colors[10]))(300), tl.col = "black", cl.pos = "n", outline = TRUE)
+colorlegend(xlim=c(3,6), ylim=c(1,10), corrscale, signif(c(seq(-11.41,14,2.49)), 4), align="r", vertical=TRUE, addlabels=TRUE, cex= 0.75)
+
+corrplot(resultsoverlap$residuals[order(abs(resultsoverlap$residuals[,1]),decreasing=TRUE),], is.corr = FALSE, col=colorRampPalette(c(colors[1],"white", colors[10]))(300), tl.col = "black", cl.pos = "n", outline = TRUE)
+colorlegend(xlim=c(3,6), ylim=c(1,10), corrscale, signif(c(seq(min(resultsoverlap$residuals),max(resultsoverlap$residuals),0.76)), 3), align="r", vertical=TRUE, addlabels=TRUE, cex= 0.75)
+
+corrplot(resultsgreater$residuals[order(abs(resultsgreater$residuals[,1]),decreasing=TRUE),], is.corr = FALSE, col=colorRampPalette(c(colors[1],"white", colors[10]))(300), tl.col = "black", cl.pos = "n", outline = TRUE)
+colorlegend(xlim=c(3,6), ylim=c(1,10), corrscale, signif(c(seq(min(resultsgreater$residuals),max(resultsgreater$residuals),2)), 3), align="r", vertical=TRUE, addlabels=TRUE, cex= 0.75)
+
 dev.off()
 ```
 
+
+Create Bar charts of most visited plants in full and overlap datasets, as well as subset by sex for supplemental
+```{r}
+head(ssff_data)
+
+bardatafull<-ssff_data %>% group_by(Sex, NectarPlantLatinName)  %>% summarise(n=length(NectarPlantLatinName))
+bardataoverlap<-overlapdata%>% group_by(Sex, NectarPlantLatinName)  %>% summarise(n=length(NectarPlantLatinName))
+
+bardatafullmale<-subset(bardatafull, Sex =="MALE")
+bardatafullfemale<-subset(bardatafull, Sex =="FEMALE")
+
+bardataoverlapmale<-subset(bardataoverlap, Sex =="MALE")
+bardataoverlapfemale<-subset(bardataoverlap, Sex =="FEMALE")
+
+pdf("barcharts.pdf", height = 20, width = 20)
+bar(bardatafullmale$n, labels = bardatafullmale$NectarPlantLatinName, main = "Full Data Male")
+
+
+bar(bardatafullfemale$n, labels = bardatafullfemale$NectarPlantLatinName, main = "Full Data female")
+
+bar(bardataoverlapmale$n, labels = bardataoverlapmale$NectarPlantLatinName, main = "overlap Data Male")
+bar(bardataoverlapfemale$n, labels = bardataoverlapfemale$NectarPlantLatinName, main = "overlap Data female")
+
+dev.off()
+
+bardatafull[order(bardatafull$n, decreasing = TRUE)]
+
+bardatafull %>% arrange(desc(n))
+bardatafull %>% sort(n, decreasing = TRUE)
+
+resultsfull$residuals[order(abs(resultsfull$residuals[,1]),decreasing=TRUE),]
+
+order(bardatafull$n, decreasing = TRUE)
+
+bardatafull2<-bardatafull[order(bardatafull$n, decreasing = TRUE),]
+
+
+pdf(file =  "barcharts.pdf")
+ggplot(bardatafull2, aes(n, fct_reorder(NectarPlantLatinName, n)))+
+geom_col()+ggtitle("Full data")
+
+ggplot(bardatafullfemale, aes(n, fct_reorder(NectarPlantLatinName, n)))+
+geom_col()+ggtitle("Full female")
+
+
+ggplot(bardatafullmale, aes(n, fct_reorder(NectarPlantLatinName, n)))+
+geom_col()+ggtitle("Full male")
+
+
+
+ggplot(bardataoverlap, aes(n, fct_reorder(NectarPlantLatinName, n)))+
+geom_col()+ggtitle("Overlap data")
+
+ggplot(bardataoverlapfemale, aes(n, fct_reorder(NectarPlantLatinName, n)))+
+geom_col()+ggtitle("Overlap Male")
+
+
+ggplot(bardataoverlapmale, aes(n, fct_reorder(NectarPlantLatinName, n)))+
+geom_col()+ggtitle("Overlap Female")
+
+
+dev.off()
+```
